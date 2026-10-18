@@ -1,0 +1,128 @@
+{
+  "name": "allai-chat",
+  "version": "1.0.0",
+  "private": true,
+  "description": "All your AI chats in one app: vertical tabs, isolated sessions per service",
+  "author": "sotger",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sotger/allai-chat.git"
+  },
+  "homepage": "https://github.com/sotger/allai-chat",
+  "bugs": {
+    "url": "https://github.com/sotger/allai-chat/issues"
+  },
+  "main": "out/main/index.js",
+  "type": "module",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.cjs",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "pack": "electron-vite build && electron-builder --dir",
+    "dist": "electron-vite build && electron-builder",
+    "dist:mac": "node scripts/generate-icon.mjs && electron-vite build && electron-builder --mac",
+    "dist:mac:all": "node scripts/generate-icon.mjs && electron-vite build && electron-builder --mac --x64 --arm64",
+    "dist:win": "node scripts/generate-icon.mjs && electron-vite build && electron-builder --win",
+    "dist:linux": "node scripts/generate-icon.mjs && electron-vite build && electron-builder --linux",
+    "install:mac": "node scripts/install-mac.mjs",
+    "release:mac": "npm version patch --no-git-tag-version && npm run install:mac"
+  },
+  "dependencies": {
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "uuid": "^11.1.0",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "electron": "^37.2.1",
+    "@types/node": "^24.3.0",
+    "@types/react": "^19.1.10",
+    "@types/react-dom": "^19.1.7",
+    "@types/uuid": "^10.0.0",
+    "@vitejs/plugin-react": "^5.0.2",
+    "electron-builder": "^25.0.0",
+    "electron-vite": "^4.0.0",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.3",
+    "vitest": "^3.2.4"
+  },
+  "build": {
+    "appId": "com.allaichat.app",
+    "productName": "ALLAI-CHAT",
+    "directories": {
+      "output": "dist-electron",
+      "buildResources": "build-resources"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "out/preload/webview.cjs"
+    ],
+    "afterPack": "scripts/after-pack.cjs",
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "build-resources/icon.png",
+      "identity": null,
+      "target": [
+        {
+          "target": "dmg"
+        }
+      ]
+    },
+    "dmg": {
+      "title": "${productName} ${version}",
+      "icon": "build-resources/icon.png"
+    },
+    "win": {
+      "icon": "build-resources/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "linux": {
+      "icon": "build-resources/icon.png",
+      "category": "Utility",
+      "maintainer": "sotger",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    }
+  },
+  "allowScripts": {
+    "electron@37.10.3": true,
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.2": true
+  }
+}
