@@ -55,7 +55,7 @@ kept.
    open "/Applications/ALLAI-CHAT.app"
    ```
 
-Requires macOS 11 (Big Sur) or newer.
+Requires macOS 13 (Ventura) or newer (Electron 44 / Chromium 152).
 
 ### Windows 10 / 11
 
@@ -183,8 +183,8 @@ opening a public issue.
 
 ## Tech stack
 
-Electron 37 · React 19 · TypeScript · Zustand · Vite 7 · electron-vite ·
-electron-builder.
+Electron 44 · Chromium 152 · React 19 · TypeScript · Zustand · Vite 7 ·
+electron-vite · electron-builder.
 
 ```
 src/

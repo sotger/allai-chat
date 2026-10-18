@@ -1,6 +1,6 @@
 {
   "name": "allai-chat",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "All your AI chats in one app: vertical tabs, isolated sessions per service",
   "author": "sotger",
@@ -40,13 +40,13 @@
     "zustand": "^5.0.8"
   },
   "devDependencies": {
-    "electron": "^37.2.1",
     "@types/node": "^24.3.0",
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",
     "@types/uuid": "^10.0.0",
     "@vitejs/plugin-react": "^5.0.2",
-    "electron-builder": "^25.0.0",
+    "electron": "^44.9.0",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^4.0.0",
     "typescript": "^5.9.2",
     "vite": "^7.1.3",
@@ -73,6 +73,7 @@
       "category": "public.app-category.productivity",
       "icon": "build-resources/icon.png",
       "identity": null,
+      "minimumSystemVersion": "13.0",
       "target": [
         {
           "target": "dmg"
@@ -121,8 +122,8 @@
     }
   },
   "allowScripts": {
-    "electron@37.10.3": true,
     "esbuild@0.25.12": true,
-    "esbuild@0.28.2": true
+    "esbuild@0.28.2": true,
+    "electron@44.9.0": true
   }
 }
