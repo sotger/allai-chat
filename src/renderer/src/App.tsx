@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { MenuAction } from '@shared/ipc';
 import { AddServiceDialog } from './components/AddServiceDialog';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { GlobalSearch } from './components/GlobalSearch';
 import { ServiceHost } from './components/ServiceHost';
 import { Sidebar } from './components/Sidebar';
 import { useAppStore } from './store';
@@ -45,6 +46,9 @@ export default function App() {
         case 'find':
           store.setFindOpen(true);
           break;
+        case 'find-all':
+          store.setGlobalFindOpen(true);
+          break;
         case 'zoom-in':
           if (tabId) store.setZoom(tabId, (store.runtime[tabId]?.zoom ?? 0) + 0.5);
           break;
@@ -70,6 +74,7 @@ export default function App() {
           {isReady ? <ServiceHost onAdd={() => setAddOpen(true)} /> : <div className="loading">Loading…</div>}
         </main>
         <AddServiceDialog />
+        <GlobalSearch />
         {error && (
           <button className="error-toast" onClick={() => setError(undefined)} title="Dismiss">
             {error}

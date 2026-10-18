@@ -19,6 +19,8 @@ profiles.
 
 ![Adding a service](docs/screenshots/add-service.png)
 
+![Searching all services](docs/screenshots/global-search.png)
+
 ## Features
 
 - **Vertical tabs** — one tab per AI service, drag to reorder, double-click to
@@ -30,6 +32,9 @@ profiles.
   window that shares the tab's session.
 - **Tabs stay loaded** — no reload when switching; audio from inactive tabs is
   muted automatically.
+- **Search across services** — `Cmd/Ctrl+Shift+F` searches the loaded content of
+  every tab, shows match counts and a snippet, and jumps to the right service on
+  click. (Loaded pages only — it is not an index of remote chat history.)
 - **Browser basics** — back / forward / reload, find in page, zoom, downloads,
   native context menu with Cut / Copy / Paste, camera and microphone support.
 - **Persistent workspace** — tabs, order, active tab, labels and window size are
@@ -139,6 +144,17 @@ x64), Windows (x64) and Linux (x64).
 4. To use a second account, add the same provider again; it gets its own session
    and is labelled `ChatGPT 2`, `Gemini 2`, etc.
 
+### Search across services
+
+Press `Cmd/Ctrl+Shift+F` (or use **View → Find in All Services…**) to search the
+content of every open tab at once. Results show the service, the number of
+matches and a short excerpt; clicking a result switches to that tab and
+highlights the match with the normal find bar.
+
+The search runs over what each page has currently loaded: open conversations and
+whatever the service has rendered in its sidebar. It does not index remote chat
+history, so conversations that are not open (and not listed) will not appear.
+
 | Shortcut | Action |
 | --- | --- |
 | `Cmd/Ctrl+1…9` | Switch to service 1–9 |
@@ -148,6 +164,7 @@ x64), Windows (x64) and Linux (x64).
 | `Cmd/Ctrl+R` | Reload service |
 | `Cmd/Ctrl+Shift+R` | Force reload (ignore cache) |
 | `Cmd/Ctrl+F` | Find in page |
+| `Cmd/Ctrl+Shift+F` | Search all services |
 | `Cmd/Ctrl+Plus` / `-` / `0` | Zoom in / out / reset |
 
 Closing a tab deletes that tab's profile (cookies, cache, storage) from disk, so

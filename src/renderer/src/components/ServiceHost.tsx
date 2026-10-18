@@ -107,6 +107,7 @@ function TopBar() {
   const runtime = useAppStore((s) => s.runtime);
   const findOpen = useAppStore((s) => s.findOpen);
   const setFindOpen = useAppStore((s) => s.setFindOpen);
+  const setGlobalFindOpen = useAppStore((s) => s.setGlobalFindOpen);
   const openExternal = useAppStore((s) => s.openExternal);
 
   const tab = tabs.find((item) => item.id === activeTabId);
@@ -144,6 +145,11 @@ function TopBar() {
 
       <div className="top-actions">
         <button
+          className="icon-button find-all"
+          onClick={() => setGlobalFindOpen(true)}
+          title="Search all services (Cmd/Ctrl+Shift+F)"
+        >{'\u2315'}<sup>all</sup></button>
+        <button
           className={`icon-button ${findOpen ? 'active' : ''}`}
           onClick={() => setFindOpen(!findOpen)}
           title="Find in page (Cmd/Ctrl+F)"
@@ -164,19 +170,28 @@ function TopBar() {
 function FindBar() {
   const open = useAppStore((s) => s.findOpen);
   const activeTabId = useAppStore((s) => s.activeTabId);
+  const findQuery = useAppStore((s) => s.findQuery);
   const setFindOpen = useAppStore((s) => s.setFindOpen);
   const [query, setQuery] = useState('');
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    if (open) {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    } else {
+    if (!open) {
       withWebview(activeTabId, (wv) => wv.stopFindInPage('clearSelection'));
       setQuery('');
+      return;
     }
-  }, [open, activeTabId]);
+
+    setQuery(findQuery);
+    inputRef.current?.focus();
+    inputRef.current?.select();
+
+    if (!findQuery) return;
+    const timer = setTimeout(() => {
+      withWebview(activeTabId, (wv) => wv.findInPage(findQuery, { forward: true }));
+    }, 160);
+    return () => clearTimeout(timer);
+  }, [open, findQuery, activeTabId]);
 
   if (!open) return null;
 

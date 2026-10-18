@@ -30,6 +30,8 @@ interface AppStore {
   error?: string;
   addOpen: boolean;
   findOpen: boolean;
+  findQuery: string;
+  globalFindOpen: boolean;
 
   bootstrap: () => Promise<void>;
   applyState: (state: AppState) => void;
@@ -43,6 +45,8 @@ interface AppStore {
   setZoom: (tabId: string, zoom: number) => void;
   setAddOpen: (open: boolean) => void;
   setFindOpen: (open: boolean) => void;
+  setFindQuery: (query: string) => void;
+  setGlobalFindOpen: (open: boolean) => void;
   setError: (message?: string) => void;
 }
 
@@ -66,6 +70,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   error: undefined,
   addOpen: false,
   findOpen: false,
+  findQuery: '',
+  globalFindOpen: false,
 
   bootstrap: async () => {
     const state = await window.allai.getState();
@@ -79,13 +85,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
       runtime[tab.id] = get().runtime[tab.id] ?? defaultRuntime();
     }
 
-    const activeChanged = get().activeTabId !== state.activeTabId;
-
     set({
       tabs: state.tabs,
       activeTabId: state.activeTabId,
-      runtime,
-      findOpen: activeChanged ? false : get().findOpen
+      runtime
     });
   },
 
@@ -145,5 +148,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   setAddOpen: (open) => set({ addOpen: open }),
   setFindOpen: (open) => set({ findOpen: open }),
+  setFindQuery: (query) => set({ findQuery: query }),
+  setGlobalFindOpen: (open) => set({ globalFindOpen: open }),
   setError: (message) => set({ error: message })
 }));

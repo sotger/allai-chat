@@ -18,6 +18,7 @@ import { IPC_CHANNELS, type AddTabInput, type MenuAction } from '@shared/ipc';
 import { getProviderConfig } from '@shared/providers';
 import { createServiceTab } from '@shared/tabs';
 import type { AppState, ServiceTab } from '@shared/types';
+import { findInTab, searchTabs, stopAllFind } from './search';
 import { checkForUpdates, initAutoUpdater } from './updater';
 
 // ── Chrome fingerprint (Google blocks embedded browsers without this) ──
@@ -457,6 +458,7 @@ function rebuildMenu(): void {
         { label: 'Reload Service', accelerator: 'CmdOrCtrl+R', click: () => sendMenuAction('reload') },
         { label: 'Force Reload Service', accelerator: 'CmdOrCtrl+Shift+R', click: () => sendMenuAction('force-reload') },
         { label: 'Find in Service…', accelerator: 'CmdOrCtrl+F', click: () => sendMenuAction('find') },
+        { label: 'Find in All Services…', accelerator: 'CmdOrCtrl+Shift+F', click: () => sendMenuAction('find-all') },
         { type: 'separator' },
         { label: 'Zoom In', accelerator: 'CmdOrCtrl+Plus', click: () => sendMenuAction('zoom-in') },
         { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', click: () => sendMenuAction('zoom-out') },
@@ -526,6 +528,16 @@ function wireIpc(): void {
   ipcMain.handle(IPC_CHANNELS.openExternal, (_event, url: string) => {
     openExternalSafe(url);
   });
+
+  ipcMain.handle(IPC_CHANNELS.searchAll, (_event, query: string) => searchTabs(state.tabs, query));
+
+  ipcMain.handle(
+    IPC_CHANNELS.findInPage,
+    (_event, tabId: string, query: string, options?: { forward?: boolean; findNext?: boolean }) =>
+      findInTab(state.tabs, tabId, query, options)
+  );
+
+  ipcMain.handle(IPC_CHANNELS.stopAllFind, () => stopAllFind(state.tabs));
 }
 
 // ── Window ───────────────────────────────────────────────────────────

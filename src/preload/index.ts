@@ -13,6 +13,9 @@ const api: AllaiApi = {
   reorderTabs: (tabIds) => ipcRenderer.invoke(IPC_CHANNELS.reorderTabs, tabIds),
   renameTab: (tabId, label) => ipcRenderer.invoke(IPC_CHANNELS.renameTab, tabId, label),
   openExternal: (url) => ipcRenderer.invoke(IPC_CHANNELS.openExternal, url),
+  searchAll: (query) => ipcRenderer.invoke(IPC_CHANNELS.searchAll, query),
+  findInPage: (tabId, query, options) => ipcRenderer.invoke(IPC_CHANNELS.findInPage, tabId, query, options),
+  stopAllFind: () => ipcRenderer.invoke(IPC_CHANNELS.stopAllFind),
   onStateChanged: (listener) => {
     const wrapped = (_event: IpcRendererEvent, state: AppState) => listener(state);
     ipcRenderer.on(IPC_CHANNELS.stateChanged, wrapped);
