@@ -28,6 +28,14 @@ interface Props {
   onAdd: () => void;
 }
 
+type SidebarMode = 'compact' | 'rail';
+
+const SIDEBAR_MODE_KEY = 'allai.sidebar-mode';
+
+function readSidebarMode(): SidebarMode {
+  return localStorage.getItem(SIDEBAR_MODE_KEY) === 'rail' ? 'rail' : 'compact';
+}
+
 export function Sidebar({ version, onAdd }: Props) {
   const tabs = useAppStore((s) => s.tabs);
   const activeTabId = useAppStore((s) => s.activeTabId);
@@ -37,9 +45,18 @@ export function Sidebar({ version, onAdd }: Props) {
   const reorderTabs = useAppStore((s) => s.reorderTabs);
   const renameTab = useAppStore((s) => s.renameTab);
 
+  const [mode, setMode] = useState<SidebarMode>(readSidebarMode);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+
+  const toggleMode = (): void => {
+    setMode((previous) => {
+      const next: SidebarMode = previous === 'rail' ? 'compact' : 'rail';
+      localStorage.setItem(SIDEBAR_MODE_KEY, next);
+      return next;
+    });
+  };
 
   const startRename = (tab: ServiceTab): void => {
     setEditingId(tab.id);
@@ -70,17 +87,32 @@ export function Sidebar({ version, onAdd }: Props) {
   };
 
   return (
-    <aside className="sidebar">
-      <div className="sidebar-brand" title="ALLAI-CHAT">
-        <span className="brand-allai">ALLAI</span>
-        <span className="brand-chat">CHAT</span>
+    <aside className={`sidebar ${mode}`}>
+      <div className="sidebar-brand">
+        <span className="brand-mark">
+          {mode === 'rail' ? (
+            <span className="brand-allai">A</span>
+          ) : (
+            <>
+              <span className="brand-allai">ALLAI</span>
+              <span className="brand-chat">CHAT</span>
+            </>
+          )}
+        </span>
+        <button
+          className="sidebar-toggle"
+          onClick={toggleMode}
+          title={mode === 'rail' ? 'Expand sidebar' : 'Collapse to icons'}
+        >
+          {mode === 'rail' ? '\u00BB' : '\u00AB'}
+        </button>
       </div>
 
       <div className="tab-list">
         {tabs.map((tab) => {
           const info = runtime[tab.id];
           const isActive = tab.id === activeTabId;
-          const title = info?.title || tab.url;
+          const title = info?.title ? `${tab.label} — ${info.title}` : `${tab.label} — ${tab.url}`;
           return (
             <div
               key={tab.id}
@@ -133,7 +165,7 @@ export function Sidebar({ version, onAdd }: Props) {
 
       <button className="add-service" onClick={onAdd} title="Add service (Cmd/Ctrl+T)">
         <span className="add-plus">+</span>
-        <span>Add service</span>
+        <span className="add-label">Add service</span>
       </button>
 
       <div className="sidebar-footer">v{version}</div>

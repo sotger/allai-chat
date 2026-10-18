@@ -18,6 +18,7 @@ import { IPC_CHANNELS, type AddTabInput, type MenuAction } from '@shared/ipc';
 import { getProviderConfig } from '@shared/providers';
 import { createServiceTab } from '@shared/tabs';
 import type { AppState, ServiceTab } from '@shared/types';
+import { checkForUpdates, initAutoUpdater } from './updater';
 
 // ── Chrome fingerprint (Google blocks embedded browsers without this) ──
 const chromeVersion = process.versions.chrome || '138.0.0.0';
@@ -46,8 +47,15 @@ function resolveGuestPreloadPath(): string {
 
 const guestPreloadPath = resolveGuestPreloadPath();
 
+// Allows tests and screenshots to run with an isolated profile.
+if (process.env.ALLAI_USER_DATA_DIR) {
+  app.setPath('userData', path.resolve(process.env.ALLAI_USER_DATA_DIR));
+}
+
 app.setName('ALLAI-CHAT');
 app.userAgentFallback = chromeUserAgent;
+
+const ISSUES_URL = 'https://github.com/sotger/allai-chat/issues';
 
 let mainWindow: BrowserWindow | undefined;
 
@@ -457,7 +465,14 @@ function rebuildMenu(): void {
         { role: 'togglefullscreen' }
       ]
     },
-    { role: 'windowMenu' }
+    { role: 'windowMenu' },
+    {
+      role: 'help',
+      submenu: [
+        { label: 'Check for Updates…', click: () => checkForUpdates(true) },
+        { label: 'Report an Issue…', click: () => openExternalSafe(ISSUES_URL) }
+      ]
+    }
   ];
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
@@ -516,6 +531,7 @@ function wireIpc(): void {
 // ── Window ───────────────────────────────────────────────────────────
 function createMainWindow(): BrowserWindow {
   const savedBounds = loadWindowBounds();
+  const shotMode = process.env.ALLAI_SHOT_MODE === '1';
 
   const window = new BrowserWindow({
     width: savedBounds.width ?? 1440,
@@ -527,6 +543,7 @@ function createMainWindow(): BrowserWindow {
     title: 'ALLAI-CHAT',
     backgroundColor: '#0d1117',
     autoHideMenuBar: false,
+    opacity: shotMode ? 0 : 1,
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.cjs'),
       nodeIntegration: false,
@@ -535,6 +552,8 @@ function createMainWindow(): BrowserWindow {
       webviewTag: true
     }
   });
+
+  if (shotMode) window.setIgnoreMouseEvents(true);
 
   if (savedBounds.isMaximized) window.maximize();
 
@@ -569,6 +588,7 @@ app.whenReady().then(() => {
   mainWindow = createMainWindow();
   wireIpc();
   rebuildMenu();
+  initAutoUpdater();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

@@ -1,6 +1,6 @@
 {
   "name": "allai-chat",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "description": "All your AI chats in one app: vertical tabs, isolated sessions per service",
   "author": "sotger",
@@ -34,6 +34,7 @@
     "release:mac": "npm version patch --no-git-tag-version && npm run install:mac"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "uuid": "^11.1.0",
@@ -72,11 +73,13 @@
     "mac": {
       "category": "public.app-category.productivity",
       "icon": "build-resources/icon.png",
-      "identity": null,
       "minimumSystemVersion": "13.0",
       "target": [
         {
           "target": "dmg"
+        },
+        {
+          "target": "zip"
         }
       ]
     },
@@ -119,7 +122,14 @@
           ]
         }
       ]
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "sotger",
+        "repo": "allai-chat"
+      }
+    ]
   },
   "allowScripts": {
     "esbuild@0.25.12": true,

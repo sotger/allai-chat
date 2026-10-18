@@ -3,8 +3,12 @@ updates:
   - package-ecosystem: npm
     directory: /
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 2
+    groups:
+      npm-minor-and-patch:
+        patterns: ['*']
+        update-types: ['minor', 'patch']
     ignore:
       # Major upgrades (Vite/Electron/TypeScript) need manual testing.
       - dependency-name: '*'
@@ -13,4 +17,7 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    groups:
+      github-actions:
+        patterns: ['*']

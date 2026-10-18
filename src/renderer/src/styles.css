@@ -50,25 +50,39 @@ button {
 
 /* ── Sidebar ─────────────────────────────────────────────────────── */
 .sidebar {
-  width: 218px;
-  flex: 0 0 218px;
+  width: 152px;
+  flex: 0 0 152px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 12px 8px 8px;
+  padding: 10px 6px 8px;
   background: var(--bg-sidebar);
   border-right: 1px solid var(--border);
   user-select: none;
+  transition: width 0.14s ease, flex-basis 0.14s ease;
+}
+
+.sidebar.rail {
+  width: 64px;
+  flex-basis: 64px;
 }
 
 .sidebar-brand {
   display: flex;
-  align-items: baseline;
-  gap: 4px;
-  padding: 2px 10px 8px;
-  font-size: 14px;
+  align-items: center;
+  justify-content: space-between;
+  height: 30px;
+  padding: 0 4px 6px;
+  font-size: 13.5px;
   font-weight: 800;
   letter-spacing: 0.04em;
+  color: #f1f5f9;
+}
+
+.brand-mark {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
 }
 
 .brand-allai {
@@ -77,6 +91,55 @@ button {
 
 .brand-chat {
   color: #60a5fa;
+}
+
+.sidebar-toggle {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.sidebar-toggle:hover {
+  background: #17202b;
+  color: #cbd5e1;
+}
+
+.sidebar.rail .sidebar-brand {
+  flex-direction: column;
+  height: auto;
+  gap: 6px;
+  padding: 0 0 6px;
+}
+
+.sidebar.rail .brand-chat,
+.sidebar.rail .tab-label,
+.sidebar.rail .tab-close,
+.sidebar.rail .add-label,
+.sidebar.rail .sidebar-footer {
+  display: none;
+}
+
+.sidebar.rail .service-tab {
+  justify-content: center;
+  padding: 7px 0;
+}
+
+.sidebar.rail .tab-accent {
+  display: none;
+}
+
+.sidebar.rail .add-service {
+  justify-content: center;
+  padding: 8px 0;
 }
 
 .tab-list {
@@ -89,7 +152,7 @@ button {
 }
 
 .tab-list::-webkit-scrollbar {
-  width: 8px;
+  width: 6px;
 }
 
 .tab-list::-webkit-scrollbar-thumb {
@@ -101,9 +164,9 @@ button {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 8px 7px 12px;
-  border-radius: 8px;
+  gap: 7px;
+  padding: 6px 6px 6px 10px;
+  border-radius: 7px;
   color: #a8b5c6;
   cursor: pointer;
   transition: background 0.1s ease;
@@ -125,8 +188,8 @@ button {
 .tab-accent {
   position: absolute;
   left: 0;
-  top: 8px;
-  bottom: 8px;
+  top: 7px;
+  bottom: 7px;
   width: 3px;
   border-radius: 2px;
   opacity: 0;
@@ -138,21 +201,21 @@ button {
 }
 
 .tab-badge {
-  width: 22px;
-  height: 22px;
-  flex: 0 0 22px;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
   border-radius: 6px;
   display: grid;
   place-items: center;
   color: #06121b;
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 700;
 }
 
 .tab-favicon {
-  width: 17px;
-  height: 17px;
-  flex: 0 0 17px;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
   margin: 0 2px;
   border-radius: 3px;
 }
@@ -160,7 +223,7 @@ button {
 .tab-label {
   flex: 1;
   min-width: 0;
-  font-size: 12.5px;
+  font-size: 11.5px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -170,7 +233,7 @@ button {
   flex: 1;
   min-width: 0;
   padding: 2px 4px;
-  font-size: 12.5px;
+  font-size: 11.5px;
   color: var(--text);
   background: #0a0f15;
   border: 1px solid var(--accent);
@@ -180,9 +243,9 @@ button {
 
 .tab-close {
   opacity: 0;
-  width: 18px;
-  height: 18px;
-  flex: 0 0 18px;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
   display: grid;
   place-items: center;
   padding: 0;
@@ -190,7 +253,7 @@ button {
   border-radius: 4px;
   background: transparent;
   color: var(--text-dim);
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1;
   cursor: pointer;
 }
@@ -206,9 +269,9 @@ button {
 }
 
 .tab-spinner {
-  width: 11px;
-  height: 11px;
-  flex: 0 0 11px;
+  width: 10px;
+  height: 10px;
+  flex: 0 0 10px;
   border: 1.5px solid #334155;
   border-top-color: #60a5fa;
   border-radius: 50%;
@@ -222,13 +285,13 @@ button {
 .add-service {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 9px 10px;
+  gap: 8px;
+  padding: 8px;
   border: 1px dashed #2a3648;
-  border-radius: 8px;
+  border-radius: 7px;
   background: transparent;
   color: #9fb0c5;
-  font-size: 12.5px;
+  font-size: 11.5px;
   cursor: pointer;
   transition: border-color 0.1s ease, color 0.1s ease;
 }
@@ -243,6 +306,7 @@ button {
   place-items: center;
   width: 20px;
   height: 20px;
+  flex: 0 0 20px;
   border-radius: 5px;
   background: #17202b;
   font-size: 15px;
@@ -252,7 +316,7 @@ button {
 .sidebar-footer {
   padding-top: 2px;
   text-align: center;
-  font-size: 10px;
+  font-size: 9.5px;
   color: #4b5b70;
 }
 
