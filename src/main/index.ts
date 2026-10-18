@@ -369,7 +369,7 @@ function wireWebContents(contents: Electron.WebContents): void {
 
     if (params.linkURL) {
       menu.append(new MenuItem({ label: 'Open Link in Browser', click: () => openExternalSafe(params.linkURL) }));
-      menu.append(new MenuItem({ label: 'Copy Link', click: () => clipboard.writeText(params.linkURL) }));
+      menu.append(new MenuItem({ label: 'Copy Link', click: () => { void clipboard.writeText(params.linkURL); } }));
       menu.append(new MenuItem({ type: 'separator' }));
     }
 
