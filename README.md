@@ -69,8 +69,8 @@ Requires macOS 11 (Big Sur) or newer.
 **AppImage (any distribution)**
 
 ```bash
-chmod +x ALLAI-CHAT-<version>-x64.AppImage
-./ALLAI-CHAT-<version>-x64.AppImage
+chmod +x ALLAI-CHAT-<version>-x86_64.AppImage
+./ALLAI-CHAT-<version>-x86_64.AppImage
 ```
 
 On Ubuntu 22.04+ the AppImage runtime needs FUSE 2:
@@ -80,7 +80,7 @@ distribution, start the app with `--no-sandbox` (less secure).
 **Debian / Ubuntu (.deb)**
 
 ```bash
-sudo apt install ./ALLAI-CHAT-<version>-x64.deb
+sudo apt install ./ALLAI-CHAT-<version>-amd64.deb
 ```
 
 Then start **ALLAI-CHAT** from your application menu, or run `allai-chat`.
