@@ -7,18 +7,23 @@ import {
   Menu,
   MenuItem,
   type MenuItemConstructorOptions,
+  nativeTheme,
   session,
-  shell
+  shell,
+  type WebContents
 } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { v4 as uuid } from 'uuid';
 
-import { IPC_CHANNELS, type AddTabInput, type MenuAction } from '@shared/ipc';
+import { IPC_CHANNELS, type AddTabInput, type DownloadRecord, type MenuAction } from '@shared/ipc';
 import { getProviderConfig } from '@shared/providers';
 import { createServiceTab } from '@shared/tabs';
-import type { AppState, ServiceTab } from '@shared/types';
-import { findInTab, searchTabs, stopAllFind } from './search';
+import type { AppState, Preferences, ServiceTab } from '@shared/types';
+import { DownloadManager } from './downloads';
+import { GOOGLE_SIGNIN_PARTITION, copyGoogleCookies, hasGoogleSession } from './google-auth';
+import { getPreferences, isDarkTheme, loadPreferences, savePreferences } from './preferences';
+import { contentsForTab, findInTab, searchTabs, stopAllFind } from './search';
 import { checkForUpdates, initAutoUpdater } from './updater';
 
 // ── Chrome fingerprint (Google blocks embedded browsers without this) ──
@@ -59,6 +64,12 @@ app.userAgentFallback = chromeUserAgent;
 const ISSUES_URL = 'https://github.com/sotger/allai-chat/issues';
 
 let mainWindow: BrowserWindow | undefined;
+let googleSignInWindow: BrowserWindow | undefined;
+
+const downloadManager = new DownloadManager(
+  () => getPreferences().downloadDirectory,
+  (downloads) => broadcastDownloads(downloads)
+);
 
 // ── Window bounds persistence ────────────────────────────────────────
 interface WindowBounds { x: number; y: number; width: number; height: number; isMaximized: boolean }
@@ -138,6 +149,7 @@ const configuredPartitions = new Set<string>();
 
 function configureSession(ses: Electron.Session): void {
   ses.setUserAgent(chromeUserAgent);
+  downloadManager.attach(ses);
 
   // Chrome client hints — Google's sign-in checks these.
   ses.webRequest.onBeforeSendHeaders((details, callback) => {
@@ -195,7 +207,7 @@ function configurePartition(partition: string): void {
 }
 
 // ── Tabs ─────────────────────────────────────────────────────────────
-function addTab(input: AddTabInput): ServiceTab {
+async function addTab(input: AddTabInput): Promise<ServiceTab> {
   const provider = getProviderConfig(input.providerId);
   const existingCount = state.tabs.filter(tab => tab.providerId === input.providerId).length;
   const tab = createServiceTab({
@@ -207,6 +219,13 @@ function addTab(input: AddTabInput): ServiceTab {
   });
 
   configurePartition(tab.partition);
+
+  // Reuse the Google session before the webview mounts, so the first
+  // "Continue with Google" already shows the account chooser.
+  if (getPreferences().reuseGoogleSignIn && !tab.isolatedAuth) {
+    await copyGoogleCookies(session.fromPartition(GOOGLE_SIGNIN_PARTITION), session.fromPartition(tab.partition));
+  }
+
   state.tabs.push(tab);
   state.activeTabId = tab.id;
   saveState();
@@ -256,6 +275,120 @@ function cycleTab(direction: 1 | -1): void {
   setActiveTab(state.tabs[next].id);
 }
 
+// ── Per-tab actions (sidebar context menu) ───────────────────────────
+function reloadTab(tabId: string): void {
+  const tab = state.tabs.find(item => item.id === tabId);
+  if (tab) contentsForTab(tab)?.reload();
+}
+
+function setTabAuthSharing(tabId: string, shared: boolean): void {
+  const tab = state.tabs.find(item => item.id === tabId);
+  if (!tab) return;
+
+  tab.isolatedAuth = !shared;
+  saveState();
+  broadcastState();
+  if (!shared || !getPreferences().reuseGoogleSignIn) return;
+
+  void (async () => {
+    const vault = session.fromPartition(GOOGLE_SIGNIN_PARTITION);
+    const target = session.fromPartition(tab.partition);
+    if (await hasGoogleSession(target)) return;
+    if (await copyGoogleCookies(vault, target) > 0) {
+      contentsForTab(tab)?.reload();
+    }
+  })();
+}
+
+async function resetTabSession(tabId: string): Promise<void> {
+  const tab = state.tabs.find(item => item.id === tabId);
+  if (!tab) return;
+
+  if (mainWindow) {
+    const choice = dialog.showMessageBoxSync(mainWindow, {
+      type: 'warning',
+      buttons: ['Cancel', 'Reset login'],
+      defaultId: 1,
+      cancelId: 0,
+      message: `Reset login info for ${tab.label}?`,
+      detail: 'Cookies, storage and cache for this service will be cleared. Other tabs keep their accounts. This tab will not receive the shared Google session.'
+    });
+    if (choice !== 1) return;
+  }
+
+  // Keep the tab independent: otherwise the shared Google vault could sign it
+  // back in on the next launch, defeating "use a different account here".
+  tab.isolatedAuth = true;
+  saveState();
+  broadcastState();
+
+  const ses = session.fromPartition(tab.partition);
+  await Promise.all([
+    ses.clearStorageData().catch(() => undefined),
+    ses.clearCache().catch(() => undefined),
+    ses.clearAuthCache().catch(() => undefined)
+  ]);
+  contentsForTab(tab)?.reload();
+}
+
+function showTabContextMenu(tabId: string): void {
+  const tab = state.tabs.find(item => item.id === tabId);
+  if (!tab) return;
+
+  const shared = !tab.isolatedAuth;
+  const menu = Menu.buildFromTemplate([
+    {
+      label: 'Reload page',
+      accelerator: 'CmdOrCtrl+R',
+      click: () => {
+        setActiveTab(tabId);
+        reloadTab(tabId);
+      }
+    },
+    {
+      label: 'Find in page…',
+      accelerator: 'CmdOrCtrl+F',
+      click: () => {
+        setActiveTab(tabId);
+        sendMenuAction('find');
+      }
+    },
+    {
+      label: 'Find in all services…',
+      accelerator: 'CmdOrCtrl+Shift+F',
+      click: () => {
+        setActiveTab(tabId);
+        sendMenuAction('find-all');
+      }
+    },
+    { type: 'separator' },
+    {
+      label: 'Allow shared Google sign-in',
+      type: 'checkbox',
+      checked: shared,
+      enabled: getPreferences().reuseGoogleSignIn,
+      click: () => setTabAuthSharing(tabId, !shared)
+    },
+    {
+      label: 'Reset login info…',
+      click: () => { void resetTabSession(tabId); }
+    },
+    { type: 'separator' },
+    {
+      label: 'Settings…',
+      accelerator: 'CmdOrCtrl+,',
+      click: () => sendMenuAction('settings')
+    },
+    {
+      label: 'Close service',
+      accelerator: 'CmdOrCtrl+W',
+      click: () => removeTab(tabId)
+    }
+  ]);
+
+  menu.popup({ window: mainWindow });
+}
+
 // ── External links / auth popups ─────────────────────────────────────
 function openExternalSafe(url: string): void {
   try {
@@ -269,68 +402,309 @@ function openExternalSafe(url: string): void {
 const AUTH_HOSTS = [
   'accounts.google.com',
   'accounts.youtube.com',
+  'myaccount.google.com',
   'login.microsoftonline.com',
   'login.live.com',
+  'login.microsoft.com',
   'appleid.apple.com',
   'github.com',
+  'gitlab.com',
   'x.com',
   'twitter.com',
   'api.twitter.com',
   'auth0.com',
+  'okta.com',
+  'onelogin.com',
+  'clerk.com',
+  'clerk.accounts.dev',
+  'clerk.dev',
+  'facebook.com',
+  'linkedin.com',
+  'discord.com',
+  'slack.com',
   'openai.com',
   'anthropic.com'
 ];
 
-/** Only trusted sign-in hosts (or the service's own domain) get a session-sharing window. */
-function isTrustedAuthUrl(targetUrl: string, currentUrl: string): boolean {
+function hostOf(url: string): string | undefined {
   try {
-    const targetHost = new URL(targetUrl).hostname;
-    const currentHost = new URL(currentUrl).hostname;
-    if (!targetHost) return false;
-    if (targetHost === currentHost) return true;
-    if (targetHost.endsWith(`.${currentHost}`) || currentHost.endsWith(`.${targetHost}`)) return true;
-    return AUTH_HOSTS.some(domain => targetHost === domain || targetHost.endsWith(`.${domain}`));
+    if (url.startsWith('blob:')) return hostOf(url.slice(5));
+    return new URL(url).hostname || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isHttpUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url);
+}
+
+function isAuthHost(host: string | undefined): boolean {
+  if (!host) return false;
+  // Clerk can live on service subdomains (auth.suno.com) as well as on
+  // *.clerk.accounts.dev.
+  if (host.includes('clerk')) return true;
+  return AUTH_HOSTS.some(domain => host === domain || host.endsWith(`.${domain}`));
+}
+
+function sameSiteHost(host: string, serviceHost: string): boolean {
+  return host === serviceHost
+    || host.endsWith(`.${serviceHost}`)
+    || serviceHost.endsWith(`.${host}`);
+}
+
+/**
+ * Popups are allowed only when they belong to the service itself, to a known
+ * sign-in provider, or are the initial `about:blank` that OAuth libraries use
+ * before navigating to the provider.
+ */
+function isTrustedPopup(targetUrl: string, openerUrl: string): boolean {
+  if (!isHttpUrl(openerUrl)) return false;
+  if (targetUrl === 'about:blank' || targetUrl === '') return true;
+  if (targetUrl.startsWith('blob:')) return true;
+
+  try {
+    const target = new URL(targetUrl);
+    if (target.protocol !== 'http:' && target.protocol !== 'https:') return false;
+    const opener = new URL(openerUrl);
+    if (!opener.hostname) return false;
+    if (sameSiteHost(target.hostname, opener.hostname)) return true;
+    return isAuthHost(target.hostname);
   } catch {
     return false;
   }
 }
-const SERVICE_DOMAINS = [
-  'chatgpt.com', 'chat.openai.com', 'claude.ai', 'gemini.google.com',
-  'chat.deepseek.com', 'grok.com', 'perplexity.ai', 'kimi.moonshot.cn',
-  'huggingface.co', 'copilot.microsoft.com', 'chat.mistral.ai', 'you.com',
-  'phind.com', 'poe.com', 'chatglm.cn'
-];
 
-function openAuthWindow(url: string, parentSession: Electron.Session, parentWindow?: BrowserWindow): void {
-  const authWindow = new BrowserWindow({
-    width: 620,
-    height: 780,
-    title: 'Sign In',
-    parent: parentWindow,
-    modal: false,
+// ── OAuth return detection ───────────────────────────────────────────
+interface AuthTracking {
+  serviceHost?: string;
+  sawAuth: boolean;
+  reloadScheduled: boolean;
+  lastReloadAt?: number;
+}
+
+const authTracking = new WeakMap<WebContents, AuthTracking>();
+
+function trackingFor(contents: WebContents): AuthTracking {
+  const existing = authTracking.get(contents);
+  if (existing) return existing;
+  const created: AuthTracking = { sawAuth: false, reloadScheduled: false };
+  authTracking.set(contents, created);
+  return created;
+}
+
+/**
+ * Reload a tab once an OAuth round-trip is over. Some SPAs (notably Grok)
+ * finish the cross-origin sign-in but leave the tab on a blank document until
+ * it is reloaded.
+ */
+function scheduleReloadAfterAuth(contents: WebContents, tracking: AuthTracking): void {
+  if (tracking.reloadScheduled) return;
+  // Guard against a service that bounces between its domain and the sign-in
+  // provider in a loop (for example an interrupted login).
+  if (tracking.lastReloadAt && Date.now() - tracking.lastReloadAt < 10000) return;
+  tracking.reloadScheduled = true;
+  tracking.sawAuth = false;
+  tracking.lastReloadAt = Date.now();
+
+  const reload = (): void => {
+    setTimeout(() => {
+      tracking.reloadScheduled = false;
+      if (contents.isDestroyed()) return;
+      const host = hostOf(contents.getURL());
+      if (!host || isAuthHost(host)) return;
+      contents.reload();
+      void syncGoogleFromSession(contents.session);
+    }, 1500);
+  };
+
+  if (contents.isLoading()) contents.once('did-stop-loading', reload);
+  else reload();
+}
+
+function markAuthNavigation(contents: WebContents, url: string): void {
+  if (contents.isDestroyed() || !isHttpUrl(url)) return;
+  const host = hostOf(url);
+  if (!host) return;
+
+  const tracking = trackingFor(contents);
+  if (!tracking.serviceHost) tracking.serviceHost = host;
+  if (host === tracking.serviceHost) return;
+
+  if (isAuthHost(host)) {
+    tracking.sawAuth = true;
+    return;
+  }
+
+  if (tracking.sawAuth && tracking.serviceHost && sameSiteHost(host, tracking.serviceHost)) {
+    scheduleReloadAfterAuth(contents, tracking);
+  }
+}
+
+function trackAuthPopup(opener: WebContents, popup: BrowserWindow): void {
+  if (opener.getType() !== 'webview' || opener.isDestroyed()) return;
+
+  const serviceHost = hostOf(opener.getURL()) ?? trackingFor(opener).serviceHost;
+  const openerUrlAtStart = opener.getURL();
+  let sawAuth = false;
+  let reloadScheduled = false;
+  let checked = false;
+
+  const checkAndReload = async (): Promise<void> => {
+    if (checked || opener.isDestroyed()) return;
+    checked = true;
+
+    const host = hostOf(opener.getURL());
+    if (host && isAuthHost(host)) return;
+
+    // Give OAuth libraries time to post the result back. If the page has
+    // navigated or rendered its own content, leave it alone; only reload a
+    // tab that is still blank (the Grok case).
+    if (opener.getURL() !== openerUrlAtStart) {
+      void syncGoogleFromSession(opener.session);
+      return;
+    }
+
+    let blank = true;
+    try {
+      blank = await Promise.race([
+        opener.executeJavaScript('(!document.body || document.body.innerText.trim().length < 20)') as Promise<boolean>,
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(true), 2000))
+      ]);
+    } catch {
+      blank = true;
+    }
+
+    if (blank) opener.reload();
+    void syncGoogleFromSession(opener.session);
+  };
+
+  const reloadOpener = (): void => {
+    if (reloadScheduled) return;
+    reloadScheduled = true;
+    setTimeout(() => {
+      if (opener.isDestroyed()) return;
+      if (opener.isLoading()) {
+        const timer = setTimeout(() => void checkAndReload(), 5000);
+        opener.once('did-stop-loading', () => {
+          clearTimeout(timer);
+          void checkAndReload();
+        });
+      } else {
+        void checkAndReload();
+      }
+    }, 1800);
+  };
+
+  const note = (url: string): void => {
+    const host = hostOf(url);
+    if (!host) return;
+    if (isAuthHost(host)) {
+      sawAuth = true;
+      return;
+    }
+    if (sawAuth && serviceHost && sameSiteHost(host, serviceHost)) reloadOpener();
+  };
+
+  const popupContents = popup.webContents;
+  popupContents.on('did-start-navigation', (event) => {
+    if (event.isMainFrame) note(event.url);
+  });
+  popupContents.on('will-redirect', (_event, url) => note(url));
+  popupContents.on('did-navigate', (_event, url) => note(url));
+  popup.on('closed', () => { if (sawAuth) reloadOpener(); });
+}
+
+// ── Google sign-in reuse ─────────────────────────────────────────────
+let googleSyncQueue: Promise<number> = Promise.resolve(0);
+
+function enqueueGoogleSync(task: () => Promise<number>): Promise<number> {
+  googleSyncQueue = googleSyncQueue.then(task, task).catch(() => 0);
+  return googleSyncQueue;
+}
+
+/** Copies the Google session from a tab that just signed in to all other tabs. */
+function syncGoogleFromSession(source: Electron.Session): Promise<number> {
+  if (!getPreferences().reuseGoogleSignIn) return Promise.resolve(0);
+
+  // An isolated tab is explicitly using its own account. Do not let that
+  // account leak into the shared vault or the other tabs.
+  const sourceTab = state.tabs.find(tab => session.fromPartition(tab.partition) === source);
+  if (sourceTab?.isolatedAuth) return Promise.resolve(0);
+
+  return enqueueGoogleSync(async () => {
+    const vault = session.fromPartition(GOOGLE_SIGNIN_PARTITION);
+    if (source !== vault) await copyGoogleCookies(source, vault);
+    const from = (await hasGoogleSession(vault)) ? vault : source;
+    if (!(await hasGoogleSession(from))) return 0;
+
+    let copied = 0;
+    for (const tab of state.tabs) {
+      if (tab.isolatedAuth) continue;
+      const target = session.fromPartition(tab.partition);
+      if (target === from || target === source) continue;
+      if (await hasGoogleSession(target)) continue;
+      if (await copyGoogleCookies(from, target) > 0) copied += 1;
+    }
+    return copied;
+  });
+}
+
+/** Copies the stored Google session into tabs that do not have one yet. */
+function syncGoogleFromVault(): Promise<number> {
+  if (!getPreferences().reuseGoogleSignIn) return Promise.resolve(0);
+  return enqueueGoogleSync(async () => {
+    const vault = session.fromPartition(GOOGLE_SIGNIN_PARTITION);
+    if (!(await hasGoogleSession(vault))) return 0;
+
+    let copied = 0;
+    for (const tab of state.tabs) {
+      if (tab.isolatedAuth) continue;
+      const target = session.fromPartition(tab.partition);
+      if (target === vault || await hasGoogleSession(target)) continue;
+      if (await copyGoogleCookies(vault, target) > 0) copied += 1;
+    }
+    return copied;
+  });
+}
+
+function openGoogleSignInWindow(): void {
+  if (googleSignInWindow && !googleSignInWindow.isDestroyed()) {
+    googleSignInWindow.focus();
+    return;
+  }
+
+  const ses = session.fromPartition(GOOGLE_SIGNIN_PARTITION);
+  configurePartition(GOOGLE_SIGNIN_PARTITION);
+
+  const window = new BrowserWindow({
+    width: 640,
+    height: 800,
+    title: 'Sign in to Google',
+    parent: mainWindow,
     autoHideMenuBar: true,
+    backgroundColor: isDarkTheme() ? '#0a0e13' : '#f5f7fa',
     webPreferences: {
       preload: guestPreloadPath,
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
-      session: parentSession
+      session: ses
     }
   });
 
-  authWindow.webContents.setUserAgent(chromeUserAgent);
-  void authWindow.loadURL(url);
+  googleSignInWindow = window;
+  window.webContents.setUserAgent(chromeUserAgent);
+  window.on('closed', () => {
+    googleSignInWindow = undefined;
+    void (async () => {
+      const signedIn = await hasGoogleSession(ses);
+      const copied = await syncGoogleFromVault();
+      sendToRenderer(IPC_CHANNELS.googleSignInDone, { copied, signedIn });
+    })();
+  });
 
-  const closeWhenBack = (targetUrl: string): void => {
-    if (SERVICE_DOMAINS.some(domain => targetUrl.includes(domain)) && !targetUrl.includes('accounts.google')) {
-      setTimeout(() => {
-        if (!authWindow.isDestroyed()) authWindow.close();
-      }, 1000);
-    }
-  };
-
-  authWindow.webContents.on('will-redirect', (_event, targetUrl) => closeWhenBack(targetUrl));
-  authWindow.webContents.on('will-navigate', (_event, targetUrl) => closeWhenBack(targetUrl));
+  void window.loadURL('https://accounts.google.com/');
 }
 
 // ── Guest web contents ───────────────────────────────────────────────
@@ -356,22 +730,57 @@ function wireWebContents(contents: Electron.WebContents): void {
     }
   });
 
-  if (contents.getType() !== 'webview') return;
+  const isWebview = contents.getType() === 'webview';
+  const isPopup = contents.getType() === 'window' && contents.opener !== null;
+  if (!isWebview && !isPopup) return;
 
+  // A real popup (not a separate BrowserWindow) keeps `window.opener`, so
+  // OAuth libraries can post the result back to the page and close themselves.
+  // The old "open another BrowserWindow and deny window.open" approach broke
+  // Claude's Google callback and left Grok on a blank page.
   contents.setWindowOpenHandler(({ url }) => {
-    if (isTrustedAuthUrl(url, contents.getURL())) {
-      openAuthWindow(url, contents.session, mainWindow);
-    } else {
-      openExternalSafe(url);
+    if (isTrustedPopup(url, contents.getURL())) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 640,
+          height: 800,
+          title: 'Sign In',
+          autoHideMenuBar: true,
+          parent: BrowserWindow.fromWebContents(contents) ?? mainWindow,
+          backgroundColor: isDarkTheme() ? '#0a0e13' : '#f5f7fa',
+          webPreferences: {
+            preload: guestPreloadPath,
+            nodeIntegration: false,
+            contextIsolation: true,
+            sandbox: true,
+            webviewTag: false,
+            session: contents.session
+          }
+        }
+      };
     }
+
+    if (isHttpUrl(url)) openExternalSafe(url);
     return { action: 'deny' };
   });
 
-  // Guests may only navigate to http(s); anything else is denied. This keeps a
-  // compromised page from loading local files or custom protocol handlers.
+  contents.on('did-create-window', (window) => trackAuthPopup(contents, window));
+
+  // Guests and auth popups may only navigate to http(s); anything else is
+  // denied. This keeps a compromised page from loading local files or custom
+  // protocol handlers.
   contents.on('will-navigate', (event, url) => {
-    if (!/^https?:\/\//i.test(url)) event.preventDefault();
+    if (!isHttpUrl(url) && url !== 'about:blank') event.preventDefault();
   });
+
+  if (isWebview) {
+    contents.on('did-start-navigation', (event) => {
+      if (event.isMainFrame) markAuthNavigation(contents, event.url);
+    });
+    contents.on('did-navigate', (_event, url) => markAuthNavigation(contents, url));
+    contents.on('did-stop-loading', () => markAuthNavigation(contents, contents.getURL()));
+  }
 
   contents.on('context-menu', (_event, params) => {
     const menu = new Menu();
@@ -420,10 +829,22 @@ function wireWebContents(contents: Electron.WebContents): void {
 app.on('web-contents-created', (_event, contents) => wireWebContents(contents));
 
 // ── Application menu ─────────────────────────────────────────────────
-function sendMenuAction(action: MenuAction): void {
+function sendToRenderer(channel: string, ...args: unknown[]): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send(IPC_CHANNELS.menuAction, action);
+    mainWindow.webContents.send(channel, ...args);
   }
+}
+
+function sendMenuAction(action: MenuAction): void {
+  sendToRenderer(IPC_CHANNELS.menuAction, action);
+}
+
+function broadcastDownloads(downloads: DownloadRecord[]): void {
+  sendToRenderer(IPC_CHANNELS.downloadsChanged, downloads);
+}
+
+function broadcastPreferences(preferences: Preferences): void {
+  sendToRenderer(IPC_CHANNELS.preferencesChanged, preferences);
 }
 
 function rebuildMenu(): void {
@@ -459,6 +880,9 @@ function rebuildMenu(): void {
         { label: 'Force Reload Service', accelerator: 'CmdOrCtrl+Shift+R', click: () => sendMenuAction('force-reload') },
         { label: 'Find in Service…', accelerator: 'CmdOrCtrl+F', click: () => sendMenuAction('find') },
         { label: 'Find in All Services…', accelerator: 'CmdOrCtrl+Shift+F', click: () => sendMenuAction('find-all') },
+        { type: 'separator' },
+        { label: 'Downloads', accelerator: 'CmdOrCtrl+J', click: () => sendMenuAction('downloads') },
+        { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => sendMenuAction('settings') },
         { type: 'separator' },
         { label: 'Zoom In', accelerator: 'CmdOrCtrl+Plus', click: () => sendMenuAction('zoom-in') },
         { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', click: () => sendMenuAction('zoom-out') },
@@ -525,6 +949,16 @@ function wireIpc(): void {
     broadcastState();
   });
 
+  ipcMain.handle(IPC_CHANNELS.showTabContextMenu, (_event, tabId: string) => {
+    showTabContextMenu(tabId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.resetTabSession, (_event, tabId: string) => resetTabSession(tabId));
+
+  ipcMain.handle(IPC_CHANNELS.setTabAuthSharing, (_event, tabId: string, shared: boolean) => {
+    setTabAuthSharing(tabId, shared);
+  });
+
   ipcMain.handle(IPC_CHANNELS.openExternal, (_event, url: string) => {
     openExternalSafe(url);
   });
@@ -538,6 +972,47 @@ function wireIpc(): void {
   );
 
   ipcMain.handle(IPC_CHANNELS.stopAllFind, () => stopAllFind(state.tabs));
+
+  ipcMain.handle(IPC_CHANNELS.getPreferences, () => getPreferences());
+
+  ipcMain.handle(IPC_CHANNELS.updatePreferences, (_event, patch: Partial<Preferences>) => {
+    const previous = getPreferences();
+    const next = savePreferences(patch);
+    broadcastPreferences(next);
+    if (!previous.reuseGoogleSignIn && next.reuseGoogleSignIn) {
+      void (async () => {
+        const signedIn = await hasGoogleSession(session.fromPartition(GOOGLE_SIGNIN_PARTITION));
+        const copied = await syncGoogleFromVault();
+        sendToRenderer(IPC_CHANNELS.googleSignInDone, { copied, signedIn });
+      })();
+    }
+    return next;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.chooseDownloadDirectory, async () => {
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, {
+        title: 'Choose download folder',
+        properties: ['openDirectory', 'createDirectory']
+      })
+      : await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
+    const directory = result.filePaths[0];
+    if (result.canceled || !directory) return getPreferences().downloadDirectory;
+    const next = savePreferences({ downloadDirectory: directory });
+    broadcastPreferences(next);
+    return next.downloadDirectory;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.openGoogleSignIn, () => {
+    openGoogleSignInWindow();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.syncGoogleSignIn, () => syncGoogleFromVault());
+
+  ipcMain.handle(IPC_CHANNELS.getDownloads, () => downloadManager.list());
+  ipcMain.handle(IPC_CHANNELS.cancelDownload, (_event, id: string) => downloadManager.cancel(id));
+  ipcMain.handle(IPC_CHANNELS.showDownload, (_event, id: string) => downloadManager.showInFolder(id));
+  ipcMain.handle(IPC_CHANNELS.openDownload, (_event, id: string) => downloadManager.open(id));
 }
 
 // ── Window ───────────────────────────────────────────────────────────
@@ -553,7 +1028,7 @@ function createMainWindow(): BrowserWindow {
     minWidth: 900,
     minHeight: 600,
     title: 'ALLAI-CHAT',
-    backgroundColor: '#0d1117',
+    backgroundColor: isDarkTheme() ? '#0a0e13' : '#f5f7fa',
     autoHideMenuBar: false,
     opacity: shotMode ? 0 : 1,
     webPreferences: {
@@ -571,6 +1046,10 @@ function createMainWindow(): BrowserWindow {
 
   // Attach hooks before the renderer creates any <webview>.
   wireWebContents(window.webContents);
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (isHttpUrl(url)) openExternalSafe(url);
+    return { action: 'deny' };
+  });
 
   window.on('close', () => saveWindowBounds(window));
 
@@ -594,13 +1073,23 @@ app.whenReady().then(() => {
   });
 
   migrateLegacyData();
+  loadPreferences();
   loadState();
+  configurePartition(GOOGLE_SIGNIN_PARTITION);
   for (const tab of state.tabs) configurePartition(tab.partition);
 
   mainWindow = createMainWindow();
   wireIpc();
   rebuildMenu();
   initAutoUpdater();
+  void syncGoogleFromVault();
+
+  nativeTheme.on('updated', () => {
+    const color = isDarkTheme() ? '#0a0e13' : '#f5f7fa';
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.setBackgroundColor(color);
+    }
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

@@ -1,5 +1,5 @@
-import type { AddTabInput } from '@shared/ipc';
-import type { AppState, ServiceTab } from '@shared/types';
+import type { AddTabInput, DownloadRecord } from '@shared/ipc';
+import type { AppState, Preferences, ServiceTab } from '@shared/types';
 import { create } from 'zustand';
 
 export interface TabRuntime {
@@ -21,6 +21,14 @@ export function defaultRuntime(): TabRuntime {
   };
 }
 
+export function defaultPreferences(): Preferences {
+  return {
+    theme: 'system',
+    downloadDirectory: '',
+    reuseGoogleSignIn: true
+  };
+}
+
 interface AppStore {
   tabs: ServiceTab[];
   activeTabId: string | null;
@@ -28,10 +36,15 @@ interface AppStore {
   isReady: boolean;
   isBusy: boolean;
   error?: string;
+  notice?: string;
   addOpen: boolean;
+  settingsOpen: boolean;
   findOpen: boolean;
   findQuery: string;
   globalFindOpen: boolean;
+  downloadsOpen: boolean;
+  downloads: DownloadRecord[];
+  preferences: Preferences;
 
   bootstrap: () => Promise<void>;
   applyState: (state: AppState) => void;
@@ -44,10 +57,19 @@ interface AppStore {
   patchRuntime: (tabId: string, patch: Partial<TabRuntime>) => void;
   setZoom: (tabId: string, zoom: number) => void;
   setAddOpen: (open: boolean) => void;
+  setSettingsOpen: (open: boolean) => void;
   setFindOpen: (open: boolean) => void;
   setFindQuery: (query: string) => void;
   setGlobalFindOpen: (open: boolean) => void;
+  setDownloadsOpen: (open: boolean) => void;
+  setDownloads: (downloads: DownloadRecord[]) => void;
+  setPreferences: (preferences: Preferences) => void;
+  updatePreferences: (patch: Partial<Preferences>) => Promise<void>;
+  chooseDownloadDirectory: () => Promise<void>;
+  openGoogleSignIn: () => Promise<void>;
+  syncGoogleSignIn: () => Promise<void>;
   setError: (message?: string) => void;
+  setNotice: (message?: string) => void;
 }
 
 async function runAction(set: (partial: Partial<AppStore>) => void, action: () => Promise<void>): Promise<void> {
@@ -68,15 +90,24 @@ export const useAppStore = create<AppStore>((set, get) => ({
   isReady: false,
   isBusy: false,
   error: undefined,
+  notice: undefined,
   addOpen: false,
+  settingsOpen: false,
   findOpen: false,
   findQuery: '',
   globalFindOpen: false,
+  downloadsOpen: false,
+  downloads: [],
+  preferences: defaultPreferences(),
 
   bootstrap: async () => {
-    const state = await window.allai.getState();
+    const [state, preferences, downloads] = await Promise.all([
+      window.allai.getState(),
+      window.allai.getPreferences(),
+      window.allai.getDownloads()
+    ]);
     get().applyState(state);
-    set({ isReady: true });
+    set({ preferences, downloads, isReady: true });
   },
 
   applyState: (state) => {
@@ -147,8 +178,37 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   setAddOpen: (open) => set({ addOpen: open }),
+  setSettingsOpen: (open) => set({ settingsOpen: open }),
   setFindOpen: (open) => set({ findOpen: open }),
   setFindQuery: (query) => set({ findQuery: query }),
   setGlobalFindOpen: (open) => set({ globalFindOpen: open }),
-  setError: (message) => set({ error: message })
+  setDownloadsOpen: (open) => set({ downloadsOpen: open }),
+  setDownloads: (downloads) => set({ downloads }),
+  setPreferences: (preferences) => set({ preferences }),
+
+  updatePreferences: async (patch) => {
+    const preferences = await window.allai.updatePreferences(patch);
+    set({ preferences });
+  },
+
+  chooseDownloadDirectory: async () => {
+    const downloadDirectory = await window.allai.chooseDownloadDirectory();
+    set((store) => ({ preferences: { ...store.preferences, downloadDirectory } }));
+  },
+
+  openGoogleSignIn: async () => {
+    await window.allai.openGoogleSignIn();
+  },
+
+  syncGoogleSignIn: async () => {
+    const copied = await window.allai.syncGoogleSignIn();
+    set({
+      notice: copied > 0
+        ? `Google sign-in copied to ${copied} service${copied === 1 ? '' : 's'}.`
+        : 'No service needed a new Google sign-in.'
+    });
+  },
+
+  setError: (message) => set({ error: message }),
+  setNotice: (message) => set({ notice: message })
 }));

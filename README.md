@@ -19,6 +19,10 @@ profiles.
 
 ![Adding a service](docs/screenshots/add-service.png)
 
+![Settings: theme, downloads and shared Google sign-in](docs/screenshots/settings.png)
+
+![Downloads panel](docs/screenshots/downloads.png)
+
 ![Searching all services](docs/screenshots/global-search.png)
 
 ## Features
@@ -28,8 +32,21 @@ profiles.
   compact by default and collapses to a 64 px icon rail with one click.
 - **Isolated sessions** — every tab runs in its own Electron partition with its
   own cookies and storage. Add the same service twice to use two accounts.
-- **Google and Microsoft sign-in work** — login popups open in a dedicated
-  window that shares the tab's session.
+- **Google and Microsoft sign-in work** — sign-in popups are real browser
+  popups that share the tab's session, so OAuth callbacks and `window.opener`
+  messaging work. Grok, Claude and Clerk-based services return to the app
+  correctly after login.
+- **One Google sign-in for all services** — optionally store a Google session
+  once and reuse it in new tabs, while every service keeps its own cookies.
+  Useful when the same Google account is used everywhere. Can be disabled in
+  **Settings → Google sign-in**.
+- **Downloads** — files go to `~/Downloads` by default, or to a folder chosen in
+  **Settings → Downloads**. A browser-style download button in the top bar shows
+  progress, lets you cancel a transfer, open the file or reveal it in Finder /
+  Explorer.
+- **System light and dark themes** — the window follows the OS by default; you
+  can force light or dark in **Settings → Appearance**. Websites receive the
+  same `prefers-color-scheme` value.
 - **Tabs stay loaded** — no reload when switching; audio from inactive tabs is
   muted automatically.
 - **Search across services** — `Cmd/Ctrl+Shift+F` searches the loaded content of
@@ -113,7 +130,9 @@ before launching if you want to skip update checks entirely.
 
 ### Build from source
 
-Requirements: Node.js **20.19+** or **22.12+** (Vite 7), npm.
+Requirements: Node.js **22.12+** (Electron 44 and Vite 7), npm. On Apple
+Silicon, use an arm64 Node build (for example via `nvm`) so Electron and the
+native modules are installed for the right architecture.
 
 ```bash
 git clone https://github.com/sotger/allai-chat.git
@@ -143,6 +162,17 @@ x64), Windows (x64) and Linux (x64).
 3. Click another tab to switch services. Each tab keeps its own login.
 4. To use a second account, add the same provider again; it gets its own session
    and is labelled `ChatGPT 2`, `Gemini 2`, etc.
+5. Right-click a service in the sidebar to **reload**, **find**, **find across
+   all services**, open **Settings**, **reset login info** for that tab only, or
+   toggle **Allow shared Google sign-in** for that tab.
+
+Each tab has a separate cookie jar, so two tabs of the same service can stay
+signed in to two different Google accounts. If shared Google sign-in is enabled,
+a new tab starts with the saved Google session; for a tab that should use another
+account, right-click it → **Reset login info**, then sign in with the other
+account. The tab is marked as independent automatically and will not receive the
+shared Google session again. Password, email-code, passkey and other login
+methods are always per-tab and are never shared.
 
 ### Search across services
 
@@ -166,9 +196,24 @@ history, so conversations that are not open (and not listed) will not appear.
 | `Cmd/Ctrl+F` | Find in page |
 | `Cmd/Ctrl+Shift+F` | Search all services |
 | `Cmd/Ctrl+Plus` / `-` / `0` | Zoom in / out / reset |
+| `Cmd/Ctrl+J` | Downloads |
+| `Cmd/Ctrl+,` | Settings |
 
 Closing a tab deletes that tab's profile (cookies, cache, storage) from disk, so
 reopening it means signing in again. This keeps stale credentials from piling up.
+
+### Known limitations
+
+- A few sites load a third-party session-replay SDK that can spin the renderer
+  inside Electron. Suno is the current example: its login popup is handled
+  correctly, but the page itself may stay on “Redirecting…”. Use the **↗** button
+  in the top bar to open that page in your normal browser until the upstream
+  issue is fixed.
+- “Reuse one Google sign-in” copies Google session cookies between local service
+  profiles. It removes repeated password prompts, but it is still a shared
+  session: leave it off if you want every tab to be completely independent.
+- macOS builds are ad-hoc signed; notarization and automatic macOS updates
+  require an Apple Developer ID (see [docs/SIGNING.md](docs/SIGNING.md)).
 
 ## Security and privacy
 
@@ -257,3 +302,18 @@ tabbed browser you see here.
 
 ALLAI-CHAT is not affiliated with OpenAI, Anthropic, Google, Microsoft or any
 other AI provider. All product names and trademarks belong to their owners.
+
+## Acknowledgements
+
+Huge thanks to **Sakthi Kuppan**, author of
+[AI BANK](https://github.com/onlyvictus-bit/ai-bank) — the original project this
+app is based on. AI BANK provided the Electron shell, the tab and session
+foundation, and the initial service integrations. Without that work ALLAI-CHAT
+would not exist. Thank you for releasing it under the MIT license.
+
+The multi-panel broadcast dashboard from AI BANK was replaced with the tabbed
+browser you see here, but the core idea — many AI services in one isolated
+Electron app — came from that project.
+
+Thanks also to the Electron, React, Vite, electron-vite and electron-builder
+teams for the tools that make this app possible.

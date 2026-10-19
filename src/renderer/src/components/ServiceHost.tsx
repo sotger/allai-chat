@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ServiceTab } from '@shared/types';
 import { useAppStore } from '../store';
 import { webviewRegistry, withWebview } from '../webview-registry';
+import { DownloadsPanel } from './DownloadsPanel';
 
 interface ServiceWebviewProps {
   tab: ServiceTab;
@@ -109,10 +110,15 @@ function TopBar() {
   const setFindOpen = useAppStore((s) => s.setFindOpen);
   const setGlobalFindOpen = useAppStore((s) => s.setGlobalFindOpen);
   const openExternal = useAppStore((s) => s.openExternal);
+  const downloads = useAppStore((s) => s.downloads);
+  const downloadsOpen = useAppStore((s) => s.downloadsOpen);
+  const setDownloadsOpen = useAppStore((s) => s.setDownloadsOpen);
 
   const tab = tabs.find((item) => item.id === activeTabId);
   const info = activeTabId ? runtime[activeTabId] : undefined;
   if (!tab || !activeTabId) return null;
+
+  const activeDownloads = downloads.filter((item) => item.state === 'progressing').length;
 
   const webview = (): Electron.WebviewTag | undefined => webviewRegistry.get(activeTabId);
 
@@ -144,6 +150,14 @@ function TopBar() {
       </div>
 
       <div className="top-actions">
+        <button
+          className={`icon-button downloads-button ${downloadsOpen ? 'active' : ''}`}
+          onClick={() => setDownloadsOpen(!downloadsOpen)}
+          title="Downloads (Cmd/Ctrl+J)"
+        >
+          {'\u2913'}
+          {activeDownloads > 0 && <span className="download-badge">{activeDownloads}</span>}
+        </button>
         <button
           className="icon-button find-all"
           onClick={() => setGlobalFindOpen(true)}
@@ -250,6 +264,7 @@ export function ServiceHost({ onAdd }: { onAdd: () => void }) {
     <div className="service-host">
       <TopBar />
       <FindBar />
+      <DownloadsPanel />
       <div className="webview-stack">
         {tabs.map((tab) => (
           <ServiceWebview key={tab.id} tab={tab} active={tab.id === activeTabId} />

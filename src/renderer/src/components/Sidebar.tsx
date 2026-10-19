@@ -44,6 +44,7 @@ export function Sidebar({ version, onAdd }: Props) {
   const removeTab = useAppStore((s) => s.removeTab);
   const reorderTabs = useAppStore((s) => s.reorderTabs);
   const renameTab = useAppStore((s) => s.renameTab);
+  const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
 
   const [mode, setMode] = useState<SidebarMode>(readSidebarMode);
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -124,6 +125,10 @@ export function Sidebar({ version, onAdd }: Props) {
               onDragOver={(event) => event.preventDefault()}
               onDrop={() => handleDrop(tab.id)}
               onClick={() => void setActiveTab(tab.id)}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                void window.allai.showTabContextMenu(tab.id);
+              }}
               onDoubleClick={() => startRename(tab)}
             >
               <span className="tab-accent" style={{ background: tab.color }} />
@@ -168,7 +173,12 @@ export function Sidebar({ version, onAdd }: Props) {
         <span className="add-label">Add service</span>
       </button>
 
-      <div className="sidebar-footer">v{version}</div>
+      <div className="sidebar-footer">
+        <button className="sidebar-settings" onClick={() => setSettingsOpen(true)} title="Settings (Cmd/Ctrl+,)">
+          {'\u2699'}
+        </button>
+        <span>v{version}</span>
+      </div>
     </aside>
   );
 }

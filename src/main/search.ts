@@ -4,7 +4,7 @@ import type { ServiceTab } from '@shared/types';
 
 const MAX_COUNT = 500;
 
-function contentsForTab(tab: ServiceTab): WebContents | undefined {
+export function contentsForTab(tab: ServiceTab): WebContents | undefined {
   const tabSession = session.fromPartition(tab.partition);
   return webContents.getAllWebContents().find((contents) =>
     contents.getType() === 'webview' && !contents.isDestroyed() && contents.session === tabSession
@@ -37,6 +37,12 @@ function countScript(query: string): string {
   while ((node = walker.nextNode()) && visited++ < 40000) {
     const raw = node.nodeValue;
     if (!raw) continue;
+
+    // Inline scripts/styles are text nodes too, but their contents are not
+    // something the user can see or search for.
+    const parentElement = node.parentElement;
+    if (parentElement && parentElement.closest('script, style, noscript, template')) continue;
+
     const text = raw.replace(/\\s+/g, ' ').trim();
     if (text.length < 4) continue;
     const lower = text.toLowerCase();
