@@ -11,6 +11,9 @@ interface ServiceWebviewProps {
 
 function ServiceWebview({ tab, active }: ServiceWebviewProps) {
   const ref = useRef<Electron.WebviewTag | null>(null);
+  // The persisted URL is only the initial target. Re-rendering `src` after a
+  // navigation would reload the page, so it is captured once per tab.
+  const startUrl = useRef(tab.url).current;
   const patchRuntime = useAppStore((s) => s.patchRuntime);
   const zoom = useAppStore((s) => s.runtime[tab.id]?.zoom ?? 0);
 
@@ -94,7 +97,7 @@ function ServiceWebview({ tab, active }: ServiceWebviewProps) {
   return (
     <webview
       ref={ref as React.Ref<Electron.WebviewTag>}
-      src={tab.url}
+      src={startUrl}
       partition={tab.partition}
       allowpopups={'true' as unknown as boolean}
       className={`service-webview ${active ? 'active' : ''}`}
@@ -109,6 +112,7 @@ function TopBar() {
   const findOpen = useAppStore((s) => s.findOpen);
   const setFindOpen = useAppStore((s) => s.setFindOpen);
   const setGlobalFindOpen = useAppStore((s) => s.setGlobalFindOpen);
+  const setBroadcastOpen = useAppStore((s) => s.setBroadcastOpen);
   const openExternal = useAppStore((s) => s.openExternal);
   const downloads = useAppStore((s) => s.downloads);
   const downloadsOpen = useAppStore((s) => s.downloadsOpen);
@@ -159,12 +163,17 @@ function TopBar() {
           {activeDownloads > 0 && <span className="download-badge">{activeDownloads}</span>}
         </button>
         <button
+          className="icon-button broadcast-button"
+          onClick={() => setBroadcastOpen(true)}
+          title="Send a prompt to all services (Cmd/Ctrl+Shift+Enter)"
+        >{'\u21C9'}</button>
+        <button
           className="icon-button find-all"
           onClick={() => setGlobalFindOpen(true)}
           title="Search all services (Cmd/Ctrl+Shift+F)"
         >{'\u2315'}<sup>all</sup></button>
         <button
-          className={`icon-button ${findOpen ? 'active' : ''}`}
+          className={`icon-button find-page ${findOpen ? 'active' : ''}`}
           onClick={() => setFindOpen(!findOpen)}
           title="Find in page (Cmd/Ctrl+F)"
         >{'\u2315'}</button>

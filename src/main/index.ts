@@ -23,7 +23,8 @@ import type { AppState, Preferences, ServiceTab } from '@shared/types';
 import { DownloadManager } from './downloads';
 import { GOOGLE_SIGNIN_PARTITION, copyGoogleCookies, hasGoogleSession } from './google-auth';
 import { getPreferences, isDarkTheme, loadPreferences, savePreferences } from './preferences';
-import { contentsForTab, findInTab, searchTabs, stopAllFind } from './search';
+import { contentsForTab, findInTab, openSearchResult, searchTabs, stopAllFind } from './search';
+import { broadcastPrompt } from './broadcast';
 import { checkForUpdates, initAutoUpdater } from './updater';
 
 // ── Chrome fingerprint (Google blocks embedded browsers without this) ──
@@ -117,9 +118,14 @@ function getStatePath(): string {
 function loadState(): void {
   try {    const parsed = JSON.parse(fs.readFileSync(getStatePath(), 'utf-8')) as Partial<AppState>;
     if (Array.isArray(parsed.tabs)) {
-      state.tabs = parsed.tabs.filter((tab): tab is ServiceTab =>
-        Boolean(tab && tab.id && tab.providerId && tab.url && tab.partition)
-      );
+      state.tabs = parsed.tabs
+        .filter((tab): tab is ServiceTab =>
+          Boolean(tab && tab.id && tab.providerId && tab.url && tab.partition)
+        )
+        // Le Chat was renamed Mistral Vibe; keep existing tabs in sync.
+        .map((tab) => (tab.providerId === 'mistral' && (tab.label === 'Le Chat' || tab.label === 'Mistral')
+          ? { ...tab, label: 'Mistral Vibe' }
+          : tab));
     }
     const active = parsed.activeTabId;
     state.activeTabId = state.tabs.some(tab => tab.id === active)
@@ -252,6 +258,33 @@ function removeTab(tabId: string): void {
   configuredPartitions.delete(tab.partition);
   void ses.clearStorageData().catch(() => undefined);
   void ses.clearCache().catch(() => undefined);
+}
+
+/**
+ * Tabs are stored with the URL of the conversation that was open, so the same
+ * chat is restored on the next launch (and global search can actually see it).
+ * This is updated on every main-frame navigation, including SPA route changes.
+ */
+function tabForContents(contents: WebContents): ServiceTab | undefined {
+  const contentsSession = contents.session;
+  return state.tabs.find(tab => session.fromPartition(tab.partition) === contentsSession);
+}
+
+let saveUrlTimer: ReturnType<typeof setTimeout> | undefined;
+
+function rememberTabUrl(contents: WebContents, url: string): void {
+  if (contents.isDestroyed() || contents.getType() !== 'webview') return;
+  if (!isHttpUrl(url)) return;
+  // Never persist a detour through an OAuth provider.
+  if (isAuthHost(hostOf(url))) return;
+  const tab = tabForContents(contents);
+  if (!tab || tab.url === url) return;
+  tab.url = url;
+  if (saveUrlTimer) clearTimeout(saveUrlTimer);
+  saveUrlTimer = setTimeout(() => {
+    saveState();
+    broadcastState();
+  }, 700);
 }
 
 function setActiveTab(tabId: string): void {
@@ -778,7 +811,13 @@ function wireWebContents(contents: Electron.WebContents): void {
     contents.on('did-start-navigation', (event) => {
       if (event.isMainFrame) markAuthNavigation(contents, event.url);
     });
-    contents.on('did-navigate', (_event, url) => markAuthNavigation(contents, url));
+    contents.on('did-navigate', (_event, url) => {
+      markAuthNavigation(contents, url);
+      rememberTabUrl(contents, url);
+    });
+    contents.on('did-navigate-in-page', (_event, url, isMainFrame) => {
+      if (isMainFrame) rememberTabUrl(contents, url);
+    });
     contents.on('did-stop-loading', () => markAuthNavigation(contents, contents.getURL()));
   }
 
@@ -880,6 +919,7 @@ function rebuildMenu(): void {
         { label: 'Force Reload Service', accelerator: 'CmdOrCtrl+Shift+R', click: () => sendMenuAction('force-reload') },
         { label: 'Find in Service…', accelerator: 'CmdOrCtrl+F', click: () => sendMenuAction('find') },
         { label: 'Find in All Services…', accelerator: 'CmdOrCtrl+Shift+F', click: () => sendMenuAction('find-all') },
+        { label: 'Send Prompt to All Services…', accelerator: 'CmdOrCtrl+Shift+Enter', click: () => sendMenuAction('broadcast') },
         { type: 'separator' },
         { label: 'Downloads', accelerator: 'CmdOrCtrl+J', click: () => sendMenuAction('downloads') },
         { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => sendMenuAction('settings') },
@@ -964,6 +1004,18 @@ function wireIpc(): void {
   });
 
   ipcMain.handle(IPC_CHANNELS.searchAll, (_event, query: string) => searchTabs(state.tabs, query));
+
+  ipcMain.handle(
+    IPC_CHANNELS.openSearchResult,
+    (_event, tabId: string, query: string, inList: boolean) =>
+      openSearchResult(state.tabs, tabId, query, Boolean(inList))
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.broadcastPrompt,
+    (_event, text: string, submit: boolean, tabIds?: string[]) =>
+      broadcastPrompt(state.tabs, text, Boolean(submit), tabIds)
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.findInPage,

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { MenuAction } from '@shared/ipc';
 import { AddServiceDialog } from './components/AddServiceDialog';
+import { BroadcastDialog } from './components/BroadcastDialog';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { GlobalSearch } from './components/GlobalSearch';
 import { ServiceHost } from './components/ServiceHost';
@@ -15,6 +16,7 @@ export default function App() {
   const notice = useAppStore((s) => s.notice);
   const setNotice = useAppStore((s) => s.setNotice);
   const bootstrap = useAppStore((s) => s.bootstrap);
+  const uiFontSize = useAppStore((s) => s.preferences.uiFontSize);
   const applyState = useAppStore((s) => s.applyState);
   const setAddOpen = useAppStore((s) => s.setAddOpen);
   const setFindOpen = useAppStore((s) => s.setFindOpen);
@@ -30,6 +32,12 @@ export default function App() {
   }, [bootstrap, setError]);
 
   useEffect(() => window.allai.onStateChanged(applyState), [applyState]);
+
+  // Interface text size is a single scale factor applied by CSS to every font
+  // size in the app shell. Web pages keep their own zoom setting.
+  useEffect(() => {
+    document.documentElement.style.setProperty('--ui-scale', String(uiFontSize / 13));
+  }, [uiFontSize]);
 
   useEffect(() => window.allai.onPreferencesChanged((preferences) => {
     useAppStore.getState().setPreferences(preferences);
@@ -76,6 +84,9 @@ export default function App() {
         case 'find-all':
           store.setGlobalFindOpen(true);
           break;
+        case 'broadcast':
+          store.setBroadcastOpen(true);
+          break;
         case 'downloads':
           store.setDownloadsOpen(!store.downloadsOpen);
           break;
@@ -109,6 +120,7 @@ export default function App() {
         <AddServiceDialog />
         <SettingsDialog />
         <GlobalSearch />
+        <BroadcastDialog />
         {error && (
           <button className="error-toast" onClick={() => setError(undefined)} title="Dismiss">
             {error}

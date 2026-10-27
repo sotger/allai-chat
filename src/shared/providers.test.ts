@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { PROVIDER_CONFIGS, PROVIDER_LIST } from './providers';
+import { PROVIDER_CONFIGS, PROVIDER_LIST, RETIRED_PROVIDER_LIST } from './providers';
 
 describe('provider configs', () => {
   it('every provider has the required fields', () => {
@@ -19,8 +19,8 @@ describe('provider configs', () => {
     }
   });
 
-  it('the provider list covers every configured provider', () => {
-    expect(new Set(PROVIDER_LIST)).toEqual(new Set(Object.keys(PROVIDER_CONFIGS)));
+  it('the provider list covers every offered or retired provider', () => {
+    expect(new Set([...PROVIDER_LIST, ...RETIRED_PROVIDER_LIST])).toEqual(new Set(Object.keys(PROVIDER_CONFIGS)));
   });
 
   it('provider ids are unique in the list', () => {

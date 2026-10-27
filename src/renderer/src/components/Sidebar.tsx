@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ServiceTab } from '@shared/types';
 import { useAppStore } from '../store';
 
@@ -31,9 +31,23 @@ interface Props {
 type SidebarMode = 'compact' | 'rail';
 
 const SIDEBAR_MODE_KEY = 'allai.sidebar-mode';
+const SIDEBAR_WIDTH_KEY = 'allai.sidebar-width';
+
+const DEFAULT_WIDTH = 152;
+const MIN_WIDTH = 140;
+const MAX_WIDTH = 420;
 
 function readSidebarMode(): SidebarMode {
   return localStorage.getItem(SIDEBAR_MODE_KEY) === 'rail' ? 'rail' : 'compact';
+}
+
+function clampWidth(width: number): number {
+  return Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(width)));
+}
+
+function readSidebarWidth(): number {
+  const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
+  return Number.isFinite(stored) && stored > 0 ? clampWidth(stored) : DEFAULT_WIDTH;
 }
 
 export function Sidebar({ version, onAdd }: Props) {
@@ -47,6 +61,9 @@ export function Sidebar({ version, onAdd }: Props) {
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
 
   const [mode, setMode] = useState<SidebarMode>(readSidebarMode);
+  const [width, setWidth] = useState(readSidebarWidth);
+  const [resizing, setResizing] = useState(false);
+  const widthRef = useRef(width);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
@@ -58,6 +75,43 @@ export function Sidebar({ version, onAdd }: Props) {
       return next;
     });
   };
+
+  useEffect(() => {
+    widthRef.current = width;
+  }, [width]);
+
+  const persistWidth = useCallback((next: number) => {
+    setWidth(next);
+    localStorage.setItem(SIDEBAR_WIDTH_KEY, String(next));
+  }, []);
+
+  const startResize = (event: React.PointerEvent<HTMLDivElement>): void => {
+    event.preventDefault();
+    const target = event.currentTarget;
+    target.setPointerCapture(event.pointerId);
+    setResizing(true);
+
+    const onMove = (moveEvent: PointerEvent): void => {
+      const next = clampWidth(moveEvent.clientX);
+      widthRef.current = next;
+      setWidth(next);
+    };
+
+    const onUp = (): void => {
+      target.releasePointerCapture(event.pointerId);
+      target.removeEventListener('pointermove', onMove);
+      target.removeEventListener('pointerup', onUp);
+      target.removeEventListener('pointercancel', onUp);
+      setResizing(false);
+      persistWidth(widthRef.current);
+    };
+
+    target.addEventListener('pointermove', onMove);
+    target.addEventListener('pointerup', onUp);
+    target.addEventListener('pointercancel', onUp);
+  };
+
+  const resetWidth = (): void => persistWidth(DEFAULT_WIDTH);
 
   const startRename = (tab: ServiceTab): void => {
     setEditingId(tab.id);
@@ -88,7 +142,10 @@ export function Sidebar({ version, onAdd }: Props) {
   };
 
   return (
-    <aside className={`sidebar ${mode}`}>
+    <aside
+      className={`sidebar ${mode} ${resizing ? 'resizing' : ''}`}
+      style={mode === 'compact' ? { width, flexBasis: width } : undefined}
+    >
       <div className="sidebar-brand">
         <span className="brand-mark">
           {mode === 'rail' ? (
@@ -172,6 +229,18 @@ export function Sidebar({ version, onAdd }: Props) {
         <span className="add-plus">+</span>
         <span className="add-label">Add service</span>
       </button>
+
+      {mode === 'compact' && (
+        <div
+          className="sidebar-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize sidebar"
+          title="Drag to resize · double-click to reset"
+          onPointerDown={startResize}
+          onDoubleClick={resetWidth}
+        />
+      )}
 
       <div className="sidebar-footer">
         <button className="sidebar-settings" onClick={() => setSettingsOpen(true)} title="Settings (Cmd/Ctrl+,)">

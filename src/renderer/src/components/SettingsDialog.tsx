@@ -1,3 +1,4 @@
+import { UI_FONT_SIZES } from '@shared/preferences';
 import type { ThemePreference } from '@shared/types';
 import { useAppStore } from '../store';
 
@@ -6,6 +7,13 @@ const THEMES: Array<{ value: ThemePreference; label: string }> = [
   { value: 'light', label: 'Light' },
   { value: 'dark', label: 'Dark' }
 ];
+
+const FONT_LABELS: Record<number, string> = {
+  13: 'Default',
+  14: 'Large',
+  15: 'Larger',
+  16: 'Largest'
+};
 
 export function SettingsDialog() {
   const open = useAppStore((s) => s.settingsOpen);
@@ -39,6 +47,25 @@ export function SettingsDialog() {
                 onClick={() => void updatePreferences({ theme: theme.value })}
               >
                 {theme.label}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="settings-section">
+          <h3>Interface size</h3>
+          <p className="muted">
+            Scales the sidebar, toolbar and dialogs. Websites keep their own zoom level.
+          </p>
+          <div className="segmented" role="group" aria-label="Interface font size">
+            {UI_FONT_SIZES.map((size) => (
+              <button
+                key={size}
+                className={`segment ${preferences.uiFontSize === size ? 'active' : ''}`}
+                onClick={() => void updatePreferences({ uiFontSize: size })}
+              >
+                {FONT_LABELS[size]}
+                <span className="segment-value">{size}</span>
               </button>
             ))}
           </div>

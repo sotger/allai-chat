@@ -4,6 +4,9 @@ import { useAppStore } from '../store';
 interface MatchResult {
   matches: number;
   snippet?: string;
+  /** All matches came from the service's chat list, not the open conversation. */
+  inList?: boolean;
+  scanned?: number;
 }
 
 function renderSnippet(text: string, query: string) {
@@ -25,6 +28,7 @@ export function GlobalSearch() {
   const setFindOpen = useAppStore((s) => s.setFindOpen);
   const setFindQuery = useAppStore((s) => s.setFindQuery);
   const setActiveTab = useAppStore((s) => s.setActiveTab);
+  const setNotice = useAppStore((s) => s.setNotice);
 
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Record<string, MatchResult>>({});
@@ -49,7 +53,12 @@ export function GlobalSearch() {
       if (token !== runToken.current) return;
       const next: Record<string, MatchResult> = {};
       for (const hit of hits) {
-        next[hit.tabId] = { matches: hit.matches, snippet: hit.snippet };
+        next[hit.tabId] = {
+          matches: hit.matches,
+          snippet: hit.snippet,
+          inList: hit.inList,
+          scanned: hit.scanned
+        };
       }
       setResults(next);
     } finally {
@@ -81,14 +90,15 @@ export function GlobalSearch() {
     void window.allai.stopAllFind();
   };
 
-  const openResult = (tabId: string): void => {
+  const openResult = async (tabId: string, inList: boolean | undefined): Promise<void> => {
     const search = query.trim();
     if (!search) return;
-    void window.allai.findInPage(tabId, search, { forward: true });
     setGlobalFindOpen(false);
     setFindQuery(search);
     setFindOpen(true);
-    void setActiveTab(tabId);
+    await setActiveTab(tabId);
+    if (inList) setNotice('Opening that chat in the service…');
+    await window.allai.openSearchResult(tabId, search, Boolean(inList));
   };
 
   const rows = tabs
@@ -96,6 +106,8 @@ export function GlobalSearch() {
     .filter(({ result }) => (result?.matches ?? 0) > 0)
     .sort((a, b) => (b.result?.matches ?? 0) - (a.result?.matches ?? 0));
 
+  const missed = tabs.filter((tab) => (results[tab.id]?.matches ?? 0) === 0);
+  const totalScanned = Object.values(results).reduce((sum, result) => sum + (result.scanned ?? 0), 0);
   const hasResults = rows.length > 0;
   const showEmpty = !searching && query.trim().length >= 2 && !hasResults;
 
@@ -119,16 +131,22 @@ export function GlobalSearch() {
         </div>
 
         <div className="global-search-hint">
-          Searches the content currently loaded in every tab. Click a result to jump to it.
+          Searches the page text that is rendered in every tab. A service only exposes
+          the conversation that is open — if a chat is closed, only its sidebar title can match.
         </div>
 
         <div className="global-search-results">
           {rows.map(({ tab, result }) => (
-            <button key={tab.id} className="global-result" onClick={() => openResult(tab.id)}>
+            <button
+              key={tab.id}
+              className="global-result"
+              onClick={() => void openResult(tab.id, result?.inList)}
+            >
               <span className="tab-badge" style={{ background: tab.color }}>{tab.icon}</span>
               <span className="global-result-body">
                 <span className="global-result-head">
                   <span className="global-result-label">{tab.label}</span>
+                  {result?.inList && <span className="global-result-tag">chat title</span>}
                   <span className="global-result-count">{result?.matches}</span>
                 </span>
                 {result?.snippet && (
@@ -143,12 +161,26 @@ export function GlobalSearch() {
           {showEmpty && (
             <p className="global-search-empty">
               No matches in the loaded pages. Conversations that are not open in a tab
-              (or not loaded in the service's sidebar) cannot be searched yet.
+              (or not rendered yet) cannot be searched — open the chat first, or use the
+              service's own search.
             </p>
           )}
 
           {searching && !hasResults && (
             <p className="global-search-empty">Searching {tabs.length} service{tabs.length === 1 ? '' : 's'}…</p>
+          )}
+
+          {!searching && hasResults && missed.length > 0 && (
+            <p className="global-search-missed">
+              No matches in {missed.map((tab) => tab.label).join(', ')}.
+            </p>
+          )}
+
+          {!searching && query.trim().length >= 2 && totalScanned > 0 && (
+            <p className="global-search-meta">
+              Scanned {totalScanned.toLocaleString()} characters across {tabs.length} open
+              service{tabs.length === 1 ? '' : 's'}.
+            </p>
           )}
         </div>
       </div>

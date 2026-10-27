@@ -4,6 +4,17 @@ export interface SearchHit {
   tabId: string;
   matches: number;
   snippet?: string;
+  /** True when every match comes from the service's chat list, not the page. */
+  inList?: boolean;
+  /** Number of characters scanned in that tab, for the "nothing found" note. */
+  scanned?: number;
+}
+
+export interface BroadcastResult {
+  tabId: string;
+  ok: boolean;
+  reason?: string;
+  submitted?: boolean;
 }
 
 export interface AppInfo {
@@ -28,6 +39,7 @@ export type MenuAction =
   | 'force-reload'
   | 'find'
   | 'find-all'
+  | 'broadcast'
   | 'downloads'
   | 'settings'
   | 'next-tab'
@@ -69,8 +81,10 @@ export interface AllaiApi {
   setTabAuthSharing: (tabId: string, shared: boolean) => Promise<void>;
   openExternal: (url: string) => Promise<void>;
   searchAll: (query: string) => Promise<SearchHit[]>;
+  openSearchResult: (tabId: string, query: string, inList: boolean) => Promise<number>;
   findInPage: (tabId: string, query: string, options?: { forward?: boolean; findNext?: boolean }) => Promise<number>;
   stopAllFind: () => Promise<void>;
+  broadcastPrompt: (text: string, submit: boolean, tabIds?: string[]) => Promise<BroadcastResult[]>;
   getPreferences: () => Promise<Preferences>;
   updatePreferences: (patch: Partial<Preferences>) => Promise<Preferences>;
   chooseDownloadDirectory: () => Promise<string>;
@@ -100,8 +114,10 @@ export const IPC_CHANNELS = {
   setTabAuthSharing: 'allai:set-tab-auth-sharing',
   openExternal: 'allai:open-external',
   searchAll: 'allai:search-all',
+  openSearchResult: 'allai:open-search-result',
   findInPage: 'allai:find-in-page',
   stopAllFind: 'allai:stop-all-find',
+  broadcastPrompt: 'allai:broadcast-prompt',
   getPreferences: 'allai:get-preferences',
   updatePreferences: 'allai:update-preferences',
   chooseDownloadDirectory: 'allai:choose-download-directory',

@@ -74,7 +74,7 @@ export const PROVIDER_CONFIGS: Record<ProviderId, ProviderConfig> = {
   },
   mistral: {
     id: 'mistral',
-    displayName: 'Le Chat',
+    displayName: 'Mistral Vibe',
     url: 'https://chat.mistral.ai',
     color: '#f97316',
     icon: 'Mi'
@@ -111,8 +111,14 @@ export const PROVIDER_CONFIGS: Record<ProviderId, ProviderConfig> = {
 
 export const PROVIDER_LIST: ProviderId[] = [
   'chatgpt', 'claude', 'gemini', 'copilot', 'perplexity', 'deepseek', 'grok', 'huggingchat',
-  'kimi', 'glm', 'mistral', 'you', 'phind', 'poe', 'custom'
+  'kimi', 'glm', 'mistral', 'phind', 'poe', 'custom'
 ];
+
+/**
+ * Providers that are no longer offered in "Add service" but must stay in
+ * PROVIDER_CONFIGS so tabs saved by older versions still resolve.
+ */
+export const RETIRED_PROVIDER_LIST: ProviderId[] = ['you'];
 
 export function getProviderConfig(id: ProviderId): ProviderConfig {
   return PROVIDER_CONFIGS[id] ?? PROVIDER_CONFIGS.custom;

@@ -25,7 +25,8 @@ export function defaultPreferences(): Preferences {
   return {
     theme: 'system',
     downloadDirectory: '',
-    reuseGoogleSignIn: true
+    reuseGoogleSignIn: true,
+    uiFontSize: 13
   };
 }
 
@@ -42,6 +43,7 @@ interface AppStore {
   findOpen: boolean;
   findQuery: string;
   globalFindOpen: boolean;
+  broadcastOpen: boolean;
   downloadsOpen: boolean;
   downloads: DownloadRecord[];
   preferences: Preferences;
@@ -61,6 +63,7 @@ interface AppStore {
   setFindOpen: (open: boolean) => void;
   setFindQuery: (query: string) => void;
   setGlobalFindOpen: (open: boolean) => void;
+  setBroadcastOpen: (open: boolean) => void;
   setDownloadsOpen: (open: boolean) => void;
   setDownloads: (downloads: DownloadRecord[]) => void;
   setPreferences: (preferences: Preferences) => void;
@@ -96,6 +99,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   findOpen: false,
   findQuery: '',
   globalFindOpen: false,
+  broadcastOpen: false,
   downloadsOpen: false,
   downloads: [],
   preferences: defaultPreferences(),
@@ -182,6 +186,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setFindOpen: (open) => set({ findOpen: open }),
   setFindQuery: (query) => set({ findQuery: query }),
   setGlobalFindOpen: (open) => set({ globalFindOpen: open }),
+  setBroadcastOpen: (open) => set({ broadcastOpen: open }),
   setDownloadsOpen: (open) => set({ downloadsOpen: open }),
   setDownloads: (downloads) => set({ downloads }),
   setPreferences: (preferences) => set({ preferences }),

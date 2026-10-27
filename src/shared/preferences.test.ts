@@ -7,7 +7,8 @@ describe('normalizePreferences', () => {
     expect(normalizePreferences(undefined, '/home/user/Downloads')).toEqual({
       theme: 'system',
       downloadDirectory: '/home/user/Downloads',
-      reuseGoogleSignIn: true
+      reuseGoogleSignIn: true,
+      uiFontSize: 13
     });
   });
 
@@ -15,11 +16,13 @@ describe('normalizePreferences', () => {
     expect(normalizePreferences({
       theme: 'dark',
       downloadDirectory: '/tmp/files',
-      reuseGoogleSignIn: false
+      reuseGoogleSignIn: false,
+      uiFontSize: 15
     }, '/home/user/Downloads')).toEqual({
       theme: 'dark',
       downloadDirectory: '/tmp/files',
-      reuseGoogleSignIn: false
+      reuseGoogleSignIn: false,
+      uiFontSize: 15
     });
   });
 
@@ -31,7 +34,12 @@ describe('normalizePreferences', () => {
     }, '/home/user/Downloads')).toEqual({
       theme: 'system',
       downloadDirectory: '/home/user/Downloads',
-      reuseGoogleSignIn: true
+      reuseGoogleSignIn: true,
+      uiFontSize: 13
     });
+  });
+
+  it('falls back for an unknown interface font size', () => {
+    expect(normalizePreferences({ uiFontSize: 99 }, '/tmp/Downloads').uiFontSize).toBe(13);
   });
 });

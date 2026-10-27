@@ -25,11 +25,15 @@ profiles.
 
 ![Searching all services](docs/screenshots/global-search.png)
 
+![Sending one prompt to every service](docs/screenshots/broadcast.png)
+
 ## Features
 
 - **Vertical tabs** — one tab per AI service, drag to reorder, double-click to
   rename, switch instantly with the sidebar or `Cmd/Ctrl+1…9`. The sidebar is
-  compact by default and collapses to a 64 px icon rail with one click.
+  compact by default, can be dragged wider with the mouse (140–420 px,
+  double-click the edge to reset) and collapses to a 64 px icon rail with one
+  click.
 - **Isolated sessions** — every tab runs in its own Electron partition with its
   own cookies and storage. Add the same service twice to use two accounts.
 - **Google and Microsoft sign-in work** — sign-in popups are real browser
@@ -46,12 +50,21 @@ profiles.
   Explorer.
 - **System light and dark themes** — the window follows the OS by default; you
   can force light or dark in **Settings → Appearance**. Websites receive the
-  same `prefers-color-scheme` value.
+  same `prefers-color-scheme` value. Interface text can be raised from 13 px to
+  16 px in **Settings → Interface size**; websites keep their own zoom level.
 - **Tabs stay loaded** — no reload when switching; audio from inactive tabs is
   muted automatically.
-- **Search across services** — `Cmd/Ctrl+Shift+F` searches the loaded content of
-  every tab, shows match counts and a snippet, and jumps to the right service on
-  click. (Loaded pages only — it is not an index of remote chat history.)
+- **Search across services** — `Cmd/Ctrl+Shift+F` searches the rendered text of
+  every tab, including phrases split across inline elements, shows match counts
+  and a snippet, and jumps to the right service on click. The app remembers the
+  conversation that was open in each tab and reopens it after a restart. Hits
+  that come only from a service's chat list are labelled **chat title**, and
+  clicking one opens that chat first. (Loaded pages only — it is not an index of
+  remote chat history.)
+- **Send a prompt to all services** — `Cmd/Ctrl+Shift+Enter` opens a small
+  composer that inserts the same prompt into every open service at once. It
+  inserts only by default; tick **Also press send** to submit without reviewing
+  each tab. Per-service results show what worked.
 - **Browser basics** — back / forward / reload, find in page, zoom, downloads,
   native context menu with Cut / Copy / Paste, camera and microphone support.
 - **Persistent workspace** — tabs, order, active tab, labels and window size are
@@ -60,8 +73,7 @@ profiles.
   talks to the services you open and checks GitHub Releases for updates.
 
 Included services: ChatGPT, Claude, Gemini, Copilot, Perplexity, DeepSeek, Grok,
-HuggingChat, Kimi, ChatGLM, Le Chat (Mistral), You.com, Phind, Poe, plus any
-custom URL.
+HuggingChat, Kimi, ChatGLM, Mistral Vibe, Phind, Poe, plus any custom URL.
 
 ## Install
 
@@ -181,9 +193,35 @@ content of every open tab at once. Results show the service, the number of
 matches and a short excerpt; clicking a result switches to that tab and
 highlights the match with the normal find bar.
 
-The search runs over what each page has currently loaded: open conversations and
-whatever the service has rendered in its sidebar. It does not index remote chat
-history, so conversations that are not open (and not listed) will not appear.
+The search runs over what each page has currently loaded: the open conversation
+plus whatever the service has rendered in its sidebar. It is not an index of
+remote chat history, so a conversation that was never opened cannot be found.
+Two things make this less surprising in practice:
+
+- The app stores the URL of the conversation that was open in each tab and
+  reopens it on the next launch, so yesterday's chat is still searchable today.
+- Matches that exist only in the service's chat list are marked **chat title**.
+  Clicking such a result opens that chat in the service first, then highlights
+  the text.
+
+The panel also lists which services were scanned without a match, and how many
+characters were scanned.
+
+### Send a prompt to all services
+
+Press `Cmd/Ctrl+Shift+Enter` (or use **View → Send Prompt to All Services…**, or
+the **⇉** button in the top bar). Type the prompt once and confirm:
+
+- By default the text is **inserted** into every open service and nothing is
+  sent. Review each tab and press Enter yourself.
+- Tick **Also press send** to submit immediately. The app clicks each service's
+  send button, or presses Enter when no button can be identified.
+- The result list shows every service and whether the text was inserted.
+
+Injection uses native input events, so React, ProseMirror and similar editors
+register it as normal typing. Background tabs are filled too — you do not have to
+switch between them. Services that block scripted input (or are still loading)
+are reported in the result list instead of failing silently.
 
 | Shortcut | Action |
 | --- | --- |
@@ -195,6 +233,7 @@ history, so conversations that are not open (and not listed) will not appear.
 | `Cmd/Ctrl+Shift+R` | Force reload (ignore cache) |
 | `Cmd/Ctrl+F` | Find in page |
 | `Cmd/Ctrl+Shift+F` | Search all services |
+| `Cmd/Ctrl+Shift+Enter` | Send a prompt to all services |
 | `Cmd/Ctrl+Plus` / `-` / `0` | Zoom in / out / reset |
 | `Cmd/Ctrl+J` | Downloads |
 | `Cmd/Ctrl+,` | Settings |

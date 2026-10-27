@@ -59,4 +59,6 @@ export interface Preferences {
    * tab. Disabled means every tab signs in independently.
    */
   reuseGoogleSignIn: boolean;
+  /** Base interface font size in px: 13 (default), 14, 15 or 16. */
+  uiFontSize: number;
 }
