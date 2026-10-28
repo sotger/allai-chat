@@ -87,7 +87,7 @@ interface AppStore {
   setIndexConfirmOpen: (open: boolean) => void;
   setHistoryReport: (report: HistoryReport | null) => void;
   refreshHistoryStats: () => Promise<void>;
-  startHistoryIndex: () => Promise<void>;
+  startHistoryIndex: (tabId?: string) => Promise<void>;
   stopHistoryIndex: () => Promise<void>;
   clearHistory: () => Promise<void>;
   updatePreferences: (patch: Partial<Preferences>) => Promise<void>;
@@ -229,8 +229,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ historyStats });
   },
 
-  startHistoryIndex: async () => {
-    const historyProgress = await window.allai.startHistoryIndex();
+  startHistoryIndex: async (tabId) => {
+    const historyProgress = await window.allai.startHistoryIndex(tabId);
     set({ historyProgress });
     const historyStats = await window.allai.getHistoryStats();
     set({ historyStats });

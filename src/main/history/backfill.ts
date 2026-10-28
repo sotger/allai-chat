@@ -7,7 +7,8 @@ import {
   normalizeText,
   type HistoryProgress,
   type HistoryReport,
-  type HistoryRunFailure
+  type HistoryRunFailure,
+  type HistorySummary
 } from '@shared/history';
 import type { ServiceTab } from '@shared/types';
 
@@ -29,6 +30,7 @@ const BLOCK_PATTERN = /captcha|unusual traffic|verify (that )?you are (a )?human
 interface BackfillOptions {
   store: HistoryStore;
   getTab: (tabId: string) => ServiceTab | undefined;
+  getTabs: () => ServiceTab[];
   getActiveTab: () => ServiceTab | undefined;
   getContents: (tab: ServiceTab) => WebContents | undefined;
   resolveSession: (tab: ServiceTab) => Session;
@@ -89,32 +91,126 @@ export class HistoryBackfill {
     this.stopRequested = true;
   }
 
+  /** One service, used by the periodic reconciler and internal calls. */
   async start(tabId?: string, runOptions: BackfillRunOptions = {}): Promise<HistoryProgress> {
     if (this.running) return this.progress;
-
-    const reason = runOptions.reason ?? 'manual';
-    const limit = Math.max(1, runOptions.limit ?? MAX_PER_RUN);
-    const startedAt = Date.now();
-    const failuresList: HistoryRunFailure[] = [];
-    let saved = 0;
 
     const tab = tabId ? this.options.getTab(tabId) : this.options.getActiveTab();
     if (!tab) return this.finish({ error: 'No service tab to index.' });
 
     await this.options.store.load();
+    if (!this.options.getContents(tab)) return this.finish({ error: 'That service is not loaded in a tab.' });
+
+    const reason = runOptions.reason ?? 'manual';
+    const limit = Math.max(1, runOptions.limit ?? MAX_PER_RUN);
+    const startedAt = Date.now();
+
+    this.running = true;
+    this.stopRequested = false;
+    try {
+      const summary = await this.runTab(tab, { limit });
+      this.emitReport({
+        tabId: tab.id,
+        service: tab.label,
+        total: summary.total,
+        saved: summary.saved,
+        failures: summary.failures,
+        startedAt,
+        reason,
+        services: [summary]
+      });
+      return this.finish({ service: tab.label, done: summary.total, total: summary.total });
+    } finally {
+      this.running = false;
+    }
+  }
+
+  /**
+   * Manual run: every loaded service, one after another, starting with the
+   * active tab. Each service keeps its own hidden window and its own pacing;
+   * between services the app waits a little longer so the next site does not
+   * see a sudden burst of requests.
+   */
+  async startAll(runOptions: BackfillRunOptions = {}): Promise<HistoryProgress> {
+    if (this.running) return this.progress;
+    await this.options.store.load();
+
+    const activeId = this.options.getActiveTab()?.id;
+    const tabs = this.options.getTabs()
+      .filter((tab) => Boolean(this.options.getContents(tab)))
+      .sort((a, b) => (a.id === activeId ? -1 : b.id === activeId ? 1 : 0));
+    if (tabs.length === 0) return this.finish({ error: 'No loaded services to index.' });
+
+    const reason = runOptions.reason ?? 'manual';
+    const limit = Math.max(1, runOptions.limit ?? MAX_PER_RUN);
+    const startedAt = Date.now();
+    const summaries: HistorySummary[] = [];
+
+    this.running = true;
+    this.stopRequested = false;
+    try {
+      for (let index = 0; index < tabs.length; index += 1) {
+        if (this.stopRequested || !this.options.isEnabled()) break;
+        const tab = tabs[index];
+        this.emit({
+          running: true,
+          service: tab.label,
+          currentTitle: undefined,
+          done: 0,
+          total: 0,
+          batchIndex: index + 1,
+          batchTotal: tabs.length
+        });
+        summaries.push(await this.runTab(tab, { limit }));
+        if (this.stopRequested) break;
+        await this.pauseBetweenServices();
+      }
+    } finally {
+      this.running = false;
+    }
+
+    const total = summaries.reduce((sum, item) => sum + item.total, 0);
+    const saved = summaries.reduce((sum, item) => sum + item.saved, 0);
+    const failures = summaries.flatMap((item) => item.failures);
+    const label = tabs.length === 1 ? tabs[0].label : `${tabs.length} services`;
+    this.emitReport({
+      tabId: activeId ?? tabs[0].id,
+      service: label,
+      total,
+      saved,
+      failures,
+      startedAt,
+      reason,
+      services: summaries
+    });
+    return this.finish({ service: label, done: total, total });
+  }
+
+  private async pauseBetweenServices(): Promise<void> {
+    const override = process.env.ALLAI_INDEX_DELAY_MS;
+    if (override !== undefined && override !== '' && Number.isFinite(Number(override))) {
+      await sleep(Math.max(0, Number(override)));
+      return;
+    }
+    await sleep(15_000 + Math.random() * 15_000);
+  }
+
+  /** Reads one service; the caller owns the `running` flag and the report. */
+  private async runTab(tab: ServiceTab, runOptions: { limit: number }): Promise<HistorySummary> {
+    const failuresList: HistoryRunFailure[] = [];
+    let saved = 0;
+    let done = 0;
+    let total = 0;
 
     const live = this.options.getContents(tab);
-    if (!live) return this.finish({ error: 'That service is not loaded in a tab.' });
+    if (!live) {
+      return { tabId: tab.id, service: tab.label, total: 0, saved: 0, failures: failuresList };
+    }
 
     // Titles from the visible tab first: everything in the chat list becomes
     // searchable even if the body pass is interrupted.
     const visible = await harvestTitles(live, { deep: false });
     this.storeTitles(tab, visible);
-
-    this.running = true;
-    this.stopRequested = false;
-    let done = 0;
-    let total = 0;
 
     try {
       this.window = this.createWindow(this.options.resolveSession(tab));
@@ -137,13 +233,10 @@ export class HistoryBackfill {
           const existing = this.options.store.get(historyId(tab.id, link.url));
           return !existing || existing.titleOnly;
         })
-        .slice(0, limit);
+        .slice(0, runOptions.limit);
 
       total = candidates.length;
-      if (candidates.length === 0) {
-        this.emitReport({ tabId: tab.id, service: tab.label, total: 0, saved: 0, failures: failuresList, startedAt, reason });
-        return this.finish({ service: tab.label, done: 0, total: 0 });
-      }
+      if (candidates.length === 0) return { tabId: tab.id, service: tab.label, total: 0, saved: 0, failures: failuresList };
 
       let consecutiveFailures = 0;
       for (const link of candidates) {
@@ -166,7 +259,7 @@ export class HistoryBackfill {
               service: tab.label,
               done,
               total,
-              error: 'The service is rate limiting requests. Indexing paused.'
+              error: 'The service is rate limiting requests. Moving to the next service.'
             });
             break;
           }
@@ -204,7 +297,7 @@ export class HistoryBackfill {
             service: tab.label,
             done,
             total,
-            error: 'The service asked for human verification. Indexing paused.'
+            error: 'The service asked for human verification. Moving to the next service.'
           });
           break;
         }
@@ -239,11 +332,9 @@ export class HistoryBackfill {
       }
     } finally {
       this.destroyWindow();
-      this.running = false;
     }
 
-    this.emitReport({ tabId: tab.id, service: tab.label, total, saved, failures: failuresList, startedAt, reason });
-    return this.finish({ service: tab.label, done, total });
+    return { tabId: tab.id, service: tab.label, total, saved, failures: failuresList };
   }
 
   private emitReport(report: Omit<HistoryReport, 'finishedAt'>): void {

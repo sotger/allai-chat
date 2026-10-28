@@ -1635,6 +1635,14 @@ button {
   font-weight: 600;
 }
 
+.index-confirm-breakdown {
+  display: block;
+  margin-top: 5px;
+  color: var(--text-dim);
+  font-size: calc(10.5px * var(--ui-scale));
+  font-weight: 400;
+}
+
 .index-report-summary {
   display: flex;
   gap: 8px;
@@ -1675,11 +1683,25 @@ button {
 }
 
 .index-report-list {
-  max-height: 220px;
+  max-height: 240px;
   overflow-y: auto;
   margin-top: 8px;
   border: 1px solid var(--border);
   border-radius: 8px;
+}
+
+.index-report-group + .index-report-group {
+  border-top: 1px solid var(--border);
+}
+
+.index-report-service {
+  padding: 6px 10px;
+  background: var(--bg-surface);
+  color: var(--text-dim);
+  font-size: calc(10px * var(--ui-scale));
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
 .index-report-row {
@@ -1696,7 +1718,7 @@ button {
   cursor: pointer;
 }
 
-.index-report-row:last-child {
+.index-report-group .index-report-row:last-child {
   border-bottom: 0;
 }
 
@@ -1721,4 +1743,23 @@ button {
   margin: 12px 0 0;
   color: var(--success);
   font-size: calc(12px * var(--ui-scale));
+}
+
+.text-button {
+  margin-right: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent-text);
+  font-size: calc(12px * var(--ui-scale));
+  cursor: pointer;
+}
+
+.text-button:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.text-button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }

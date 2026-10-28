@@ -20,17 +20,23 @@ export function IndexConfirmDialog() {
     setStarting(false);
     void window.allai.estimateHistoryIndex()
       .then(setEstimate)
-      .catch(() => setEstimate({ candidates: 0, estimatedMs: 0 }));
+      .catch(() => setEstimate({ candidates: 0, estimatedMs: 0, services: [] }));
   }, [open]);
 
   if (!open) return null;
 
   const tab = tabs.find((item) => item.id === activeTabId) ?? tabs[0];
+  const queuedServices = (estimate?.services ?? []).filter((item) => item.candidates > 0);
+  const scope = queuedServices.length > 1
+    ? `across all ${queuedServices.length} services`
+    : queuedServices.length === 1
+      ? `on ${queuedServices[0].service}`
+      : tab ? `on ${tab.label}` : '';
 
-  const start = async (): Promise<void> => {
+  const start = async (onlyTabId?: string): Promise<void> => {
     setStarting(true);
     try {
-      await startHistoryIndex();
+      await startHistoryIndex(onlyTabId);
       setOpen(false);
     } finally {
       setStarting(false);
@@ -46,10 +52,11 @@ export function IndexConfirmDialog() {
         </div>
 
         <p className="index-confirm-text">
-          To make global search find <strong>every conversation</strong> in your account
-          {tab ? ` on ${tab.label}` : ''}, the app will read them in the background. It runs
-          in a hidden window, one chat at a time, 3–8 seconds apart, and stops immediately
-          if the service shows a rate limit or a captcha.
+          To make global search find <strong>every conversation</strong> {scope}, the app
+          will read them in the background. It runs in a hidden window, one chat at a time,
+          3–8 seconds apart, and moves to the next service if one shows a rate limit or a
+          captcha. It starts with the service you have open and then continues through the
+          others.
         </p>
 
         <div className="index-confirm-estimate">
@@ -57,7 +64,13 @@ export function IndexConfirmDialog() {
             ? 'Counting conversations…'
             : estimate.candidates === 0
               ? 'Everything found in the chat list is already indexed. You can still run it to re-read the sidebars.'
-              : `${estimate.candidates.toLocaleString()} conversation${estimate.candidates === 1 ? '' : 's'} to read — roughly ${formatDuration(estimate.estimatedMs)}.`}
+              : `${estimate.candidates.toLocaleString()} conversation${estimate.candidates === 1 ? '' : 's'} across ${queuedServices.length} service${queuedServices.length === 1 ? '' : 's'} — roughly ${formatDuration(estimate.estimatedMs)}.`}
+          {queuedServices.length > 1 && (
+            <span className="index-confirm-breakdown">
+              {queuedServices.slice(0, 8).map((item) => `${item.service} ${item.candidates}`).join(' · ')}
+              {queuedServices.length > 8 ? ' · …' : ''}
+            </span>
+          )}
         </div>
 
         <p className="muted settings-hint">
@@ -74,6 +87,15 @@ export function IndexConfirmDialog() {
         )}
 
         <div className="modal-actions">
+          {queuedServices.length > 1 && tab && (
+            <button
+              className="text-button"
+              onClick={() => void start(tab.id)}
+              disabled={starting}
+            >
+              Only {tab.label}
+            </button>
+          )}
           <button className="secondary-button" onClick={() => setOpen(false)}>Cancel</button>
           <button className="primary-button" onClick={() => void start()} disabled={starting}>
             {starting ? 'Starting…' : 'Start indexing'}

@@ -43,6 +43,9 @@ export interface HistoryProgress {
   done: number;
   total: number;
   error?: string;
+  /** Position of the current service in a multi-service run. */
+  batchIndex?: number;
+  batchTotal?: number;
   /** Timestamp of the last finished run, for the "indexed N chats" note. */
   finishedAt?: number;
 }
@@ -52,6 +55,15 @@ export interface HistoryRunFailure {
   url: string;
   /** Human-readable reason, shown in the report. */
   reason: string;
+}
+
+/** Per-service result inside a multi-service run. */
+export interface HistorySummary {
+  tabId: string;
+  service: string;
+  total: number;
+  saved: number;
+  failures: HistoryRunFailure[];
 }
 
 /** Summary shown when a background indexing run finishes. */
@@ -64,12 +76,22 @@ export interface HistoryReport {
   startedAt: number;
   finishedAt: number;
   reason: 'manual' | 'auto';
+  /** Every service touched by the run, in order. */
+  services?: HistorySummary[];
+}
+
+export interface HistoryEstimateService {
+  tabId: string;
+  service: string;
+  candidates: number;
 }
 
 export interface HistoryEstimate {
   candidates: number;
   /** Rough duration in ms, based on load + settle + human pacing per chat. */
   estimatedMs: number;
+  /** Per-service breakdown, so the dialog can say which services are covered. */
+  services: HistoryEstimateService[];
 }
 
 /** A hit returned by a service's own search API (currently ChatGPT). */

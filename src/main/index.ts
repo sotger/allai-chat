@@ -86,6 +86,7 @@ const historyStore = new HistoryStore(app.getPath('userData'));
 const historyBackfill = new HistoryBackfill({
   store: historyStore,
   getTab: (tabId) => state.tabs.find(tab => tab.id === tabId),
+  getTabs: () => state.tabs,
   getActiveTab: () => state.tabs.find(tab => tab.id === state.activeTabId),
   getContents: (tab) => contentsForTab(tab),
   resolveSession: (tab) => session.fromPartition(tab.partition),
@@ -1180,20 +1181,27 @@ function wireIpc(): void {
   });
 
   ipcMain.handle(IPC_CHANNELS.estimateHistoryIndex, async (_event, tabId?: string) => {
-    const tab = tabId
-      ? state.tabs.find(item => item.id === tabId)
-      : state.tabs.find(item => item.id === state.activeTabId) ?? state.tabs[0];
-    if (!tab) return { candidates: 0, estimatedMs: 0 };
-    const contents = contentsForTab(tab);
-    if (!contents) return { candidates: 0, estimatedMs: 0 };
-    const links = await harvestTitles(contents);
-    const missing = links.filter((link) => {
-      if (!looksLikeChatUrl(link.url)) return false;
-      const entry = historyStore.get(historyId(tab.id, link.url));
-      return !entry || entry.titleOnly;
-    });
+    const targets = tabId
+      ? state.tabs.filter(item => item.id === tabId)
+      : state.tabs.filter(item => contentsForTab(item));
+
+    const services = await Promise.all(targets.map(async (tab) => {
+      const contents = contentsForTab(tab);
+      if (!contents) return { tabId: tab.id, service: tab.label, candidates: 0 };
+      const links = await harvestTitles(contents);
+      const missing = links.filter((link) => {
+        if (!looksLikeChatUrl(link.url)) return false;
+        const entry = historyStore.get(historyId(tab.id, link.url));
+        return !entry || entry.titleOnly;
+      });
+      return { tabId: tab.id, service: tab.label, candidates: missing.length };
+    }));
+
+    const candidates = services.reduce((sum, item) => sum + item.candidates, 0);
     // Rough budget: page load + settle + human pause between conversations.
-    return { candidates: missing.length, estimatedMs: missing.length * 12_000 };
+    const perChatMs = 12_000;
+    const betweenServicesMs = 25_000 * Math.max(0, services.length - 1);
+    return { candidates, estimatedMs: candidates * perChatMs + betweenServicesMs, services };
   });
 
   ipcMain.handle(IPC_CHANNELS.getHistoryStats, async () => {
@@ -1219,7 +1227,8 @@ function wireIpc(): void {
   ipcMain.handle(IPC_CHANNELS.startHistoryIndex, (_event, tabId?: string) => {
     // Fire and forget: a run takes minutes. Progress arrives over
     // `historyProgress`, so the confirmation dialog can close immediately.
-    void historyBackfill.start(tabId, { reason: 'manual' });
+    if (tabId) void historyBackfill.start(tabId, { reason: 'manual' });
+    else void historyBackfill.startAll({ reason: 'manual' });
     const tab = tabId
       ? state.tabs.find(item => item.id === tabId)
       : state.tabs.find(item => item.id === state.activeTabId);

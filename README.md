@@ -227,14 +227,20 @@ and nothing is uploaded. **Settings → History search** has two switches:
   `document.visibilityState = "hidden"`, which several services treat as a bot
   signal.
 
-**Index now** first shows a confirmation with the number of conversations it
-found and a rough time estimate (page load + settle + the pause between chats).
-While it runs, a bar at the bottom of the window shows the service, the current
-conversation, the processed/total count and **Stop**. When the run ends, a
-report shows how many conversations were saved, how many were queued and which
-ones could not be read, with a reason and a link: opening any of them once is
-enough to add it to the index. Progress is not resumed automatically after a
-restart — press **Index now** again.
+**Index now** covers **every loaded service**, starting with the active tab and
+then continuing in sidebar order. It first shows how many conversations it found
+per service and a rough total estimate (page load + settle + the pause between
+chats); **Only <service>** limits the run to the current tab. While it runs, a
+bar at the bottom of the window shows the service and its position in the batch
+(`Indexing Claude 3/7`), the current conversation, the processed/total count and
+**Stop**, which stops the whole batch. When it ends, one report shows the saved,
+queued and failed totals, groups the failures by service, and links each one:
+opening a failed chat once is enough to add it to the index. Progress is not
+resumed automatically after a restart — press **Index now** again.
+
+Services are read one after another, each in its own hidden window, with an
+extra 15–30 second pause between them, so the switch from one site to the next
+does not look like a burst.
 
 **Keeping the index current.** With background indexing on, the app also does a
 small top-up pass: two minutes after a service is added (including one that was

@@ -23,7 +23,11 @@
 - **Settings → History search** with two switches, **Index now**, **Stop**,
   **Clear index** and a stored-size summary.
 - **Confirmation with an estimate.** Starting a run first shows how many
-  conversations were found and roughly how long it will take.
+  conversations were found per service and roughly how long it will take.
+- **Manual runs cover every service.** `Index now` walks the loaded services in
+  order, starting with the active tab and pausing 15–30 s between them; the
+  confirmation also offers **Only <service>**. One report groups the failures by
+  service.
 - **Report after a run.** Saved, queued and failed counts; failed conversations
   are listed with a reason and a link, and opening one adds it to the index.
 - **Automatic top-ups.** With background indexing on, a new (or re-added)
@@ -45,7 +49,7 @@
 - Re-visiting a chat no longer appends an identical row: a capture is written
   only when the text or the title actually changed.
 - The indexing bar shows a static, centred conversation title instead of a
-  marquee.
+  marquee, plus the position in a multi-service run (`3/7`).
 
 ### Notes
 

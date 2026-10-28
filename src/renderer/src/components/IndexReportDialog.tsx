@@ -11,10 +11,10 @@ export function IndexReportDialog() {
   const close = (): void => setHistoryReport(null);
   const duration = formatDuration(report.finishedAt - report.startedAt);
 
-  const openFailure = async (url: string): Promise<void> => {
+  const openFailure = async (url: string, tabId: string): Promise<void> => {
     close();
-    await setActiveTab(report.tabId);
-    await window.allai.openHistoryEntry(report.tabId, url);
+    await setActiveTab(tabId);
+    await window.allai.openHistoryEntry(tabId, url);
   };
 
   return (
@@ -45,8 +45,9 @@ export function IndexReportDialog() {
         </div>
 
         <p className="muted">
-          {report.service} — the saved conversations are searchable right now, including
-          chats that are closed.
+          {report.services && report.services.length > 1
+            ? `${report.services.length} services — the saved conversations are searchable right now, including chats that are closed.`
+            : `${report.service} — the saved conversations are searchable right now, including chats that are closed.`}
         </p>
 
         {report.failures.length > 0 && (
@@ -57,17 +58,26 @@ export function IndexReportDialog() {
               automatically.
             </p>
             <div className="index-report-list">
-              {report.failures.map((failure, index) => (
-                <button
-                  key={`${failure.url}:${index}`}
-                  className="index-report-row"
-                  onClick={() => void openFailure(failure.url)}
-                  title={failure.url}
-                >
-                  <span className="index-report-title">{failure.title || failure.url}</span>
-                  <span className="index-report-reason">{failure.reason}</span>
-                </button>
-              ))}
+              {(report.services ?? [{ tabId: report.tabId, service: report.service, total: report.total, saved: report.saved, failures: report.failures }])
+                .filter((group) => group.failures.length > 0)
+                .map((group) => (
+                  <div key={group.tabId} className="index-report-group">
+                    {report.services && report.services.length > 1 && (
+                      <div className="index-report-service">{group.service}</div>
+                    )}
+                    {group.failures.map((failure, index) => (
+                      <button
+                        key={`${failure.url}:${index}`}
+                        className="index-report-row"
+                        onClick={() => void openFailure(failure.url, group.tabId)}
+                        title={failure.url}
+                      >
+                        <span className="index-report-title">{failure.title || failure.url}</span>
+                        <span className="index-report-reason">{failure.reason}</span>
+                      </button>
+                    ))}
+                  </div>
+                ))}
             </div>
           </>
         )}

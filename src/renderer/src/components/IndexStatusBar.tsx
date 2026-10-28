@@ -40,7 +40,9 @@ export function IndexStatusBar() {
         : <span className="index-status-check">{'\u2713'}</span>}
       <span className="index-status-label">
         {progress.running
-          ? `Indexing ${progress.service ?? 'history'}`
+          ? `Indexing ${progress.service ?? 'history'}${progress.batchTotal && progress.batchTotal > 1
+            ? ` ${progress.batchIndex ?? 1}/${progress.batchTotal}`
+            : ''}`
           : progress.error ? 'Indexing paused' : 'History index'}
       </span>
       <span className="index-status-ticker">
