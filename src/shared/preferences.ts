@@ -25,6 +25,8 @@ export function normalizePreferences(raw: Partial<Preferences> | undefined, fall
     theme: isThemePreference(raw?.theme) ? raw.theme : 'system',
     downloadDirectory: directory || fallbackDirectory,
     reuseGoogleSignIn: raw?.reuseGoogleSignIn !== false,
-    uiFontSize: isUiFontSize(raw?.uiFontSize) ? raw.uiFontSize : DEFAULT_UI_FONT_SIZE
+    uiFontSize: isUiFontSize(raw?.uiFontSize) ? raw.uiFontSize : DEFAULT_UI_FONT_SIZE,
+    historyIndexEnabled: raw?.historyIndexEnabled !== false,
+    historyBackfillEnabled: raw?.historyBackfillEnabled === true
   };
 }

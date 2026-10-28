@@ -4,6 +4,9 @@ import { AddServiceDialog } from './components/AddServiceDialog';
 import { BroadcastDialog } from './components/BroadcastDialog';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { GlobalSearch } from './components/GlobalSearch';
+import { IndexConfirmDialog } from './components/IndexConfirmDialog';
+import { IndexReportDialog } from './components/IndexReportDialog';
+import { IndexStatusBar } from './components/IndexStatusBar';
 import { ServiceHost } from './components/ServiceHost';
 import { SettingsDialog } from './components/SettingsDialog';
 import { Sidebar } from './components/Sidebar';
@@ -46,6 +49,28 @@ export default function App() {
   useEffect(() => window.allai.onDownloadsChanged((downloads) => {
     useAppStore.getState().setDownloads(downloads);
   }), []);
+
+  useEffect(() => window.allai.onHistoryProgress((progress) => {
+    useAppStore.getState().setHistoryProgress(progress);
+  }), []);
+
+  useEffect(() => window.allai.onHistoryReport((report) => {
+    useAppStore.getState().setHistoryReport(report);
+  }), []);
+
+  const indexingRunning = useAppStore((state) => state.historyProgress.running);
+  const indexingFinishedAt = useAppStore((state) => state.historyProgress.finishedAt);
+
+  useEffect(() => {
+    if (!indexingRunning) {
+      void useAppStore.getState().refreshHistoryStats().catch(() => undefined);
+      return;
+    }
+    const timer = setInterval(() => {
+      void useAppStore.getState().refreshHistoryStats().catch(() => undefined);
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [indexingRunning, indexingFinishedAt]);
 
   useEffect(() => window.allai.onGoogleSignInDone(({ copied, signedIn }) => {
     useAppStore.getState().setNotice(
@@ -116,9 +141,12 @@ export default function App() {
         <Sidebar version={version} onAdd={() => setAddOpen(true)} />
         <main className="content">
           {isReady ? <ServiceHost onAdd={() => setAddOpen(true)} /> : <div className="loading">Loading…</div>}
+          <IndexStatusBar />
         </main>
         <AddServiceDialog />
         <SettingsDialog />
+        <IndexConfirmDialog />
+        <IndexReportDialog />
         <GlobalSearch />
         <BroadcastDialog />
         {error && (

@@ -1,4 +1,5 @@
 import type { AddTabInput, DownloadRecord } from '@shared/ipc';
+import type { HistoryProgress, HistoryReport, HistoryStats } from '@shared/history';
 import type { AppState, Preferences, ServiceTab } from '@shared/types';
 import { create } from 'zustand';
 
@@ -26,8 +27,18 @@ export function defaultPreferences(): Preferences {
     theme: 'system',
     downloadDirectory: '',
     reuseGoogleSignIn: true,
-    uiFontSize: 13
+    uiFontSize: 13,
+    historyIndexEnabled: true,
+    historyBackfillEnabled: false
   };
+}
+
+export function defaultHistoryStats(): HistoryStats {
+  return { entries: 0, withText: 0, characters: 0, services: 0 };
+}
+
+export function defaultHistoryProgress(): HistoryProgress {
+  return { running: false, done: 0, total: 0 };
 }
 
 interface AppStore {
@@ -47,6 +58,10 @@ interface AppStore {
   downloadsOpen: boolean;
   downloads: DownloadRecord[];
   preferences: Preferences;
+  historyStats: HistoryStats;
+  historyProgress: HistoryProgress;
+  indexConfirmOpen: boolean;
+  historyReport: HistoryReport | null;
 
   bootstrap: () => Promise<void>;
   applyState: (state: AppState) => void;
@@ -67,6 +82,14 @@ interface AppStore {
   setDownloadsOpen: (open: boolean) => void;
   setDownloads: (downloads: DownloadRecord[]) => void;
   setPreferences: (preferences: Preferences) => void;
+  setHistoryStats: (stats: HistoryStats) => void;
+  setHistoryProgress: (progress: HistoryProgress) => void;
+  setIndexConfirmOpen: (open: boolean) => void;
+  setHistoryReport: (report: HistoryReport | null) => void;
+  refreshHistoryStats: () => Promise<void>;
+  startHistoryIndex: () => Promise<void>;
+  stopHistoryIndex: () => Promise<void>;
+  clearHistory: () => Promise<void>;
   updatePreferences: (patch: Partial<Preferences>) => Promise<void>;
   chooseDownloadDirectory: () => Promise<void>;
   openGoogleSignIn: () => Promise<void>;
@@ -103,15 +126,21 @@ export const useAppStore = create<AppStore>((set, get) => ({
   downloadsOpen: false,
   downloads: [],
   preferences: defaultPreferences(),
+  historyStats: defaultHistoryStats(),
+  historyProgress: defaultHistoryProgress(),
+  indexConfirmOpen: false,
+  historyReport: null,
 
   bootstrap: async () => {
-    const [state, preferences, downloads] = await Promise.all([
+    const [state, preferences, downloads, historyStats, historyProgress] = await Promise.all([
       window.allai.getState(),
       window.allai.getPreferences(),
-      window.allai.getDownloads()
+      window.allai.getDownloads(),
+      window.allai.getHistoryStats(),
+      window.allai.getHistoryProgress()
     ]);
     get().applyState(state);
-    set({ preferences, downloads, isReady: true });
+    set({ preferences, downloads, historyStats, historyProgress, isReady: true });
   },
 
   applyState: (state) => {
@@ -190,6 +219,31 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setDownloadsOpen: (open) => set({ downloadsOpen: open }),
   setDownloads: (downloads) => set({ downloads }),
   setPreferences: (preferences) => set({ preferences }),
+  setHistoryStats: (historyStats) => set({ historyStats }),
+  setHistoryProgress: (historyProgress) => set({ historyProgress }),
+  setIndexConfirmOpen: (indexConfirmOpen) => set({ indexConfirmOpen }),
+  setHistoryReport: (historyReport) => set({ historyReport }),
+
+  refreshHistoryStats: async () => {
+    const historyStats = await window.allai.getHistoryStats();
+    set({ historyStats });
+  },
+
+  startHistoryIndex: async () => {
+    const historyProgress = await window.allai.startHistoryIndex();
+    set({ historyProgress });
+    const historyStats = await window.allai.getHistoryStats();
+    set({ historyStats });
+  },
+
+  stopHistoryIndex: async () => {
+    await window.allai.stopHistoryIndex();
+  },
+
+  clearHistory: async () => {
+    await window.allai.clearHistory();
+    set({ historyStats: defaultHistoryStats() });
+  },
 
   updatePreferences: async (patch) => {
     const preferences = await window.allai.updatePreferences(patch);

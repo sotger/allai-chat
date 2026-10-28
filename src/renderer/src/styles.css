@@ -451,6 +451,7 @@ button {
 
 /* ── Content / top bar ───────────────────────────────────────────── */
 .content {
+  position: relative;
   flex: 1;
   min-width: 0;
   display: flex;
@@ -1461,4 +1462,263 @@ button {
 .segment.active .segment-value {
   color: var(--accent-text);
   opacity: 0.75;
+}
+
+
+/* ── Local history index ─────────────────────────────────────────── */
+.index-status {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 30px;
+  padding: 0 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-surface);
+  box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.18);
+  color: var(--text-muted);
+  font-size: calc(11px * var(--ui-scale));
+}
+
+.index-status-check {
+  color: var(--success);
+  font-weight: 700;
+}
+
+.index-status-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.index-status-count {
+  color: var(--text-dim);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.index-status-ticker {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.index-status-title {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.index-status.idle .index-status-title {
+  color: var(--text-muted);
+  opacity: 0.85;
+}
+
+.index-status-bar {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  background: var(--border);
+}
+
+.index-status-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+
+.index-status-stop {
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-size: calc(10.5px * var(--ui-scale));
+  cursor: pointer;
+}
+
+.index-status-stop:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* ── Search sections (indexed history, server index) ─────────────── */
+.global-section + .global-section,
+.global-section + .global-search-empty,
+.global-section + .global-search-missed {
+  margin-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.global-section-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 10px 4px;
+  color: var(--text-dim);
+  font-size: calc(10px * var(--ui-scale));
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.global-section-note {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: calc(10px * var(--ui-scale));
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.global-result-age {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: calc(10px * var(--ui-scale));
+  white-space: nowrap;
+}
+
+.global-search-indexing {
+  color: var(--accent-text);
+}
+
+.danger-button:hover:not(:disabled) {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+
+/* ── Indexing confirmation and report ────────────────────────────── */
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.index-confirm-modal,
+.index-report-modal {
+  width: min(560px, 100%);
+}
+
+.index-confirm-text {
+  margin: 0 0 12px;
+  font-size: calc(12.5px * var(--ui-scale));
+  line-height: 1.6;
+}
+
+.index-confirm-estimate {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: calc(12.5px * var(--ui-scale));
+  font-weight: 600;
+}
+
+.index-report-summary {
+  display: flex;
+  gap: 8px;
+  margin: 4px 0 12px;
+}
+
+.index-report-stat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+}
+
+.index-report-value {
+  font-size: calc(18px * var(--ui-scale));
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.index-report-label {
+  color: var(--text-dim);
+  font-size: calc(10px * var(--ui-scale));
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.index-report-heading {
+  margin: 14px 0 4px;
+  font-size: calc(11px * var(--ui-scale));
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.index-report-list {
+  max-height: 220px;
+  overflow-y: auto;
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.index-report-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.index-report-row:last-child {
+  border-bottom: 0;
+}
+
+.index-report-row:hover {
+  background: var(--bg-hover);
+}
+
+.index-report-title {
+  font-size: calc(12px * var(--ui-scale));
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.index-report-reason {
+  color: var(--text-dim);
+  font-size: calc(10.5px * var(--ui-scale));
+}
+
+.index-report-ok {
+  margin: 12px 0 0;
+  color: var(--success);
+  font-size: calc(12px * var(--ui-scale));
 }

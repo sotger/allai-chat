@@ -1,0 +1,240 @@
+import type { ProviderId } from './types';
+
+/**
+ * One captured conversation. `titleOnly` entries come from the service's chat
+ * list and have no body text yet; they are upgraded when the chat is opened.
+ */
+export interface HistoryEntry {
+  id: string;
+  tabId: string;
+  providerId: ProviderId;
+  service: string;
+  url: string;
+  title: string;
+  text: string;
+  capturedAt: number;
+  titleOnly: boolean;
+}
+
+export interface HistoryHit {
+  id: string;
+  tabId: string;
+  service: string;
+  url: string;
+  title: string;
+  snippet: string;
+  score: number;
+  titleOnly: boolean;
+  capturedAt: number;
+}
+
+export interface HistoryStats {
+  entries: number;
+  withText: number;
+  characters: number;
+  services: number;
+}
+
+/** Progress of the background indexer, streamed to the renderer. */
+export interface HistoryProgress {
+  running: boolean;
+  service?: string;
+  currentTitle?: string;
+  done: number;
+  total: number;
+  error?: string;
+  /** Timestamp of the last finished run, for the "indexed N chats" note. */
+  finishedAt?: number;
+}
+
+export interface HistoryRunFailure {
+  title: string;
+  url: string;
+  /** Human-readable reason, shown in the report. */
+  reason: string;
+}
+
+/** Summary shown when a background indexing run finishes. */
+export interface HistoryReport {
+  tabId: string;
+  service: string;
+  total: number;
+  saved: number;
+  failures: HistoryRunFailure[];
+  startedAt: number;
+  finishedAt: number;
+  reason: 'manual' | 'auto';
+}
+
+export interface HistoryEstimate {
+  candidates: number;
+  /** Rough duration in ms, based on load + settle + human pacing per chat. */
+  estimatedMs: number;
+}
+
+/** A hit returned by a service's own search API (currently ChatGPT). */
+export interface ServerSearchHit {
+  tabId: string;
+  service: string;
+  title: string;
+  snippet: string;
+  url: string;
+}
+
+/** Collapses whitespace the same way the live page search does. */
+export function normalizeText(value: string | undefined | null): string {
+  return (value ?? '').replace(/\s+/g, ' ').trim();
+}
+
+/** FNV-1a: short, stable, dependency-free id suffix. */
+export function hashString(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+/**
+ * URLs arrive with SPA noise (`?rid=…`, `#…`, trailing slashes). The entry id
+ * must stay the same across those variants so re-visiting a chat updates the
+ * existing row instead of creating duplicates.
+ */
+export function canonicalHistoryUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    url.hash = '';
+    const host = url.hostname.toLowerCase();
+    const path = url.pathname.replace(/\/+$/, '');
+    const search = url.searchParams.get('q') ? `?q=${url.searchParams.get('q')}` : '';
+    return `${url.protocol}//${host}${path}${search}`;
+  } catch {
+    return raw;
+  }
+}
+
+export function historyId(tabId: string, url: string): string {
+  return `${tabId}:${hashString(canonicalHistoryUrl(url))}`;
+}
+
+const AUTH_HOSTS = [
+  'accounts.google.com',
+  'accounts.youtube.com',
+  'login.microsoftonline.com',
+  'login.live.com',
+  'appleid.apple.com',
+  'github.com',
+  'gitlab.com',
+  'x.com',
+  'twitter.com',
+  'auth0.com',
+  'okta.com',
+  'clerk.com',
+  'clerk.accounts.dev',
+  'facebook.com',
+  'linkedin.com',
+  'discord.com',
+  'slack.com'
+];
+
+function hostOf(raw: string): string | undefined {
+  try {
+    return new URL(raw).hostname.toLowerCase() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Auth providers must never end up in the local history. */
+export function isAuthUrl(raw: string): boolean {
+  const host = hostOf(raw);
+  if (!host) return false;
+  if (host.includes('clerk')) return true;
+  return AUTH_HOSTS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+}
+
+export function isIndexableUrl(raw: string): boolean {
+  if (!/^https?:\/\//i.test(raw)) return false;
+  if (isAuthUrl(raw)) return false;
+  const host = hostOf(raw);
+  return Boolean(host);
+}
+
+const NON_CHAT_PATHS = [
+  '/settings', '/pricing', '/login', '/logout', '/auth', '/signin', '/signup',
+  '/register', '/help', '/about', '/terms', '/privacy', '/download', '/downloads',
+  '/new', '/explore', '/discover', '/apps', '/plugins', '/projects', '/projects/new'
+];
+
+/**
+ * Heuristic that works across services without per-site selectors: chat URLs
+ * contain a long id (uuid, hex or numeric) and are not one of the known
+ * utility pages.
+ */
+export function looksLikeChatUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    if (!/^https?:$/.test(url.protocol)) return false;
+    const path = url.pathname.toLowerCase();
+    if (path === '/' || path === '') return false;
+    if (NON_CHAT_PATHS.some((known) => path === known || path.startsWith(`${known}/`))) return false;
+    const segments = path.split('/').filter(Boolean);
+    return segments.some((segment) => /[0-9a-f]{8,}/i.test(segment) || /^\d{6,}$/.test(segment));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Keeps the richest copy of a conversation. A partial render must never replace
+ * a complete capture, and a title-only row is upgraded by a real capture.
+ */
+export function mergeHistoryEntry(previous: HistoryEntry | undefined, next: HistoryEntry): HistoryEntry {
+  if (!previous) return next;
+
+  const previousText = normalizeText(previous.text);
+  const nextText = normalizeText(next.text);
+  // Ignore a much shorter re-render (skeleton screens, lazy lists).
+  const keepPreviousText = previousText.length > 0
+    && nextText.length < previousText.length * 0.6;
+  const text = keepPreviousText || nextText.length === 0
+    ? previous.text
+    : next.text;
+  const titleOnly = text.trim().length === 0;
+  const title = normalizeText(next.title) || previous.title;
+
+  return {
+    ...previous,
+    ...next,
+    title,
+    text,
+    titleOnly,
+    capturedAt: text && text !== previous.text ? next.capturedAt : previous.capturedAt
+  };
+}
+
+/** mm:ss (or h:mm:ss) for dialogs and reports. */
+export function formatDuration(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  if (hours > 0) return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+/** Approximate on-disk size of the stored text, for the settings summary. */
+export function historyStats(entries: Iterable<HistoryEntry>): HistoryStats {
+  let withText = 0;
+  let characters = 0;
+  const services = new Set<string>();
+  let count = 0;
+  for (const entry of entries) {
+    count += 1;
+    services.add(entry.tabId);
+    characters += entry.text.length;
+    if (entry.text.trim()) withText += 1;
+  }
+  return { entries: count, withText, characters, services: services.size };
+}

@@ -26,6 +26,12 @@ import { getPreferences, isDarkTheme, loadPreferences, savePreferences } from '.
 import { contentsForTab, findInTab, openSearchResult, searchTabs, stopAllFind } from './search';
 import { broadcastPrompt } from './broadcast';
 import { checkForUpdates, initAutoUpdater } from './updater';
+import { HistoryBackfill } from './history/backfill';
+import { capturePage, harvestTitles, titleEntry, toHistoryEntry } from './history/capture';
+import { HistoryReconciler } from './history/reconcile';
+import { isChatGptUrl, searchChatGpt } from './history/server-search';
+import { HistoryStore } from './history/store';
+import { historyId, looksLikeChatUrl } from '@shared/history';
 
 // ── Chrome fingerprint (Google blocks embedded browsers without this) ──
 const chromeVersion = process.versions.chrome || '138.0.0.0';
@@ -71,6 +77,86 @@ const downloadManager = new DownloadManager(
   () => getPreferences().downloadDirectory,
   (downloads) => broadcastDownloads(downloads)
 );
+
+// ── Local history index ──────────────────────────────────────────────
+// Conversations visited in any tab are captured on navigation and indexed
+// locally, so global search also finds chats that are not open right now.
+const historyStore = new HistoryStore(app.getPath('userData'));
+
+const historyBackfill = new HistoryBackfill({
+  store: historyStore,
+  getTab: (tabId) => state.tabs.find(tab => tab.id === tabId),
+  getActiveTab: () => state.tabs.find(tab => tab.id === state.activeTabId),
+  getContents: (tab) => contentsForTab(tab),
+  resolveSession: (tab) => session.fromPartition(tab.partition),
+  prepareContents: (contents) => contents.setUserAgent(chromeUserAgent),
+  guestPreloadPath,
+  isEnabled: () => getPreferences().historyIndexEnabled,
+  onProgress: (progress) => sendToRenderer(IPC_CHANNELS.historyProgress, progress),
+  onReport: (report) => sendToRenderer(IPC_CHANNELS.historyReport, report)
+});
+
+// Tops up the index in the background: new services, new chats, and services
+// that were removed and added back later.
+const historyReconciler = new HistoryReconciler({
+  store: historyStore,
+  backfill: historyBackfill,
+  getTabs: () => state.tabs,
+  getContents: (tab) => contentsForTab(tab),
+  isEnabled: () => {
+    const preferences = getPreferences();
+    return preferences.historyIndexEnabled && preferences.historyBackfillEnabled;
+  },
+  statePath: path.join(app.getPath('userData'), 'history', 'reconcile.json')
+});
+
+const captureTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const lastHarvestAt = new Map<string, number>();
+
+function scheduleCapture(contents: WebContents): void {
+  if (contents.isDestroyed() || !getPreferences().historyIndexEnabled) return;
+  const tab = tabForContents(contents);
+  if (!tab) return;
+  const existing = captureTimers.get(tab.id);
+  if (existing) clearTimeout(existing);
+  captureTimers.set(tab.id, setTimeout(() => {
+    captureTimers.delete(tab.id);
+    void (async () => {
+      const page = await capturePage(contents);
+      if (!page) return;
+      const entry = toHistoryEntry(tab, page);
+      if (entry) historyStore.upsert(entry);
+    })();
+  }, 2000));
+}
+
+/**
+ * Copies the titles from the service's own chat list. This works for every
+ * service without per-site selectors and makes the whole history searchable
+ * before any body text is captured.
+ */
+async function harvestTab(contents: WebContents, force = false): Promise<number> {
+  if (contents.isDestroyed() || !getPreferences().historyIndexEnabled) return 0;
+  const tab = tabForContents(contents);
+  if (!tab) return 0;
+
+  const last = lastHarvestAt.get(tab.id) ?? 0;
+  if (!force && Date.now() - last < 5 * 60 * 1000) return 0;
+  lastHarvestAt.set(tab.id, Date.now());
+
+  const links = await harvestTitles(contents);
+  let added = 0;
+  for (const link of links) {
+    if (!looksLikeChatUrl(link.url)) continue;
+    const id = historyId(tab.id, link.url);
+    if (historyStore.get(id)) continue;
+    const entry = titleEntry(tab, link.url, link.title);
+    if (!entry) continue;
+    historyStore.upsert(entry);
+    added += 1;
+  }
+  return added;
+}
 
 // ── Window bounds persistence ────────────────────────────────────────
 interface WindowBounds { x: number; y: number; width: number; height: number; isMaximized: boolean }
@@ -236,6 +322,7 @@ async function addTab(input: AddTabInput): Promise<ServiceTab> {
   state.activeTabId = tab.id;
   saveState();
   broadcastState();
+  historyReconciler.noteTabAdded(tab.id);
   return tab;
 }
 
@@ -251,6 +338,11 @@ function removeTab(tabId: string): void {
   }
   saveState();
   broadcastState();
+
+  // Conversations captured for this tab belong to the profile that is being
+  // wiped below; keeping them would produce search hits that cannot open.
+  historyReconciler.noteTabRemoved(tabId);
+  void historyStore.removeTab(tabId);
 
   // The tab owned its own isolated profile — wipe it so credentials don't
   // linger on disk once the tab is gone.
@@ -814,11 +906,18 @@ function wireWebContents(contents: Electron.WebContents): void {
     contents.on('did-navigate', (_event, url) => {
       markAuthNavigation(contents, url);
       rememberTabUrl(contents, url);
+      scheduleCapture(contents);
     });
     contents.on('did-navigate-in-page', (_event, url, isMainFrame) => {
-      if (isMainFrame) rememberTabUrl(contents, url);
+      if (!isMainFrame) return;
+      rememberTabUrl(contents, url);
+      scheduleCapture(contents);
     });
-    contents.on('did-stop-loading', () => markAuthNavigation(contents, contents.getURL()));
+    contents.on('did-stop-loading', () => {
+      markAuthNavigation(contents, contents.getURL());
+      scheduleCapture(contents);
+      void harvestTab(contents);
+    });
   }
 
   contents.on('context-menu', (_event, params) => {
@@ -1031,6 +1130,9 @@ function wireIpc(): void {
     const previous = getPreferences();
     const next = savePreferences(patch);
     broadcastPreferences(next);
+    if (!next.historyIndexEnabled || !next.historyBackfillEnabled) {
+      historyBackfill.stop();
+    }
     if (!previous.reuseGoogleSignIn && next.reuseGoogleSignIn) {
       void (async () => {
         const signedIn = await hasGoogleSession(session.fromPartition(GOOGLE_SIGNIN_PARTITION));
@@ -1060,6 +1162,83 @@ function wireIpc(): void {
   });
 
   ipcMain.handle(IPC_CHANNELS.syncGoogleSignIn, () => syncGoogleFromVault());
+
+  ipcMain.handle(IPC_CHANNELS.searchHistory, async (_event, query: string) => {
+    await historyStore.load();
+    return historyStore.search(query, 30);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.searchServerHistory, async (_event, query: string) => {
+    if (!query || query.trim().length < 2) return [];
+    for (const tab of state.tabs) {
+      const contents = contentsForTab(tab);
+      if (contents && isChatGptUrl(contents.getURL())) {
+        return searchChatGpt(contents, query, tab.id);
+      }
+    }
+    return [];
+  });
+
+  ipcMain.handle(IPC_CHANNELS.estimateHistoryIndex, async (_event, tabId?: string) => {
+    const tab = tabId
+      ? state.tabs.find(item => item.id === tabId)
+      : state.tabs.find(item => item.id === state.activeTabId) ?? state.tabs[0];
+    if (!tab) return { candidates: 0, estimatedMs: 0 };
+    const contents = contentsForTab(tab);
+    if (!contents) return { candidates: 0, estimatedMs: 0 };
+    const links = await harvestTitles(contents);
+    const missing = links.filter((link) => {
+      if (!looksLikeChatUrl(link.url)) return false;
+      const entry = historyStore.get(historyId(tab.id, link.url));
+      return !entry || entry.titleOnly;
+    });
+    // Rough budget: page load + settle + human pause between conversations.
+    return { candidates: missing.length, estimatedMs: missing.length * 12_000 };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.getHistoryStats, async () => {
+    await historyStore.load();
+    return historyStore.stats();
+  });
+  ipcMain.handle(IPC_CHANNELS.getHistoryProgress, () => historyBackfill.getProgress());
+
+  ipcMain.handle(IPC_CHANNELS.harvestHistory, async (_event, tabId?: string) => {
+    if (tabId) {
+      const tab = state.tabs.find(item => item.id === tabId);
+      const contents = tab ? contentsForTab(tab) : undefined;
+      return contents ? harvestTab(contents, true) : 0;
+    }
+    let added = 0;
+    for (const tab of state.tabs) {
+      const contents = contentsForTab(tab);
+      if (contents) added += await harvestTab(contents, true);
+    }
+    return added;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.startHistoryIndex, (_event, tabId?: string) => {
+    // Fire and forget: a run takes minutes. Progress arrives over
+    // `historyProgress`, so the confirmation dialog can close immediately.
+    void historyBackfill.start(tabId, { reason: 'manual' });
+    const tab = tabId
+      ? state.tabs.find(item => item.id === tabId)
+      : state.tabs.find(item => item.id === state.activeTabId);
+    return { running: true, done: 0, total: 0, service: tab?.label } as const;
+  });
+  ipcMain.handle(IPC_CHANNELS.stopHistoryIndex, () => { historyBackfill.stop(); });
+
+  ipcMain.handle(IPC_CHANNELS.openHistoryEntry, (_event, tabId: string, url: string) => {
+    if (!isHttpUrl(url)) return;
+    const tab = state.tabs.find(item => item.id === tabId);
+    if (!tab) return;
+    setActiveTab(tabId);
+    const contents = contentsForTab(tab);
+    if (contents) void contents.loadURL(url).catch(() => undefined);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.clearHistory, async () => {
+    await historyStore.clear();
+  });
 
   ipcMain.handle(IPC_CHANNELS.getDownloads, () => downloadManager.list());
   ipcMain.handle(IPC_CHANNELS.cancelDownload, (_event, id: string) => downloadManager.cancel(id));
@@ -1127,6 +1306,7 @@ app.whenReady().then(() => {
   migrateLegacyData();
   loadPreferences();
   loadState();
+  void historyStore.load();
   configurePartition(GOOGLE_SIGNIN_PARTITION);
   for (const tab of state.tabs) configurePartition(tab.partition);
 
@@ -1134,6 +1314,7 @@ app.whenReady().then(() => {
   wireIpc();
   rebuildMenu();
   initAutoUpdater();
+  historyReconciler.start();
   void syncGoogleFromVault();
 
   nativeTheme.on('updated', () => {
@@ -1149,6 +1330,12 @@ app.whenReady().then(() => {
       rebuildMenu();
     }
   });
+});
+
+app.on('before-quit', () => {
+  historyReconciler.stop();
+  historyBackfill.stop();
+  historyStore.flushSync();
 });
 
 app.on('window-all-closed', () => {

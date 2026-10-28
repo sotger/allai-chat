@@ -1,3 +1,11 @@
+import type {
+  HistoryEstimate,
+  HistoryHit,
+  HistoryProgress,
+  HistoryReport,
+  HistoryStats,
+  ServerSearchHit
+} from './history';
 import type { AppState, Preferences, ProviderId, ServiceTab } from './types';
 
 export interface SearchHit {
@@ -94,11 +102,23 @@ export interface AllaiApi {
   cancelDownload: (id: string) => Promise<void>;
   showDownload: (id: string) => Promise<void>;
   openDownload: (id: string) => Promise<void>;
+  searchHistory: (query: string) => Promise<HistoryHit[]>;
+  searchServerHistory: (query: string) => Promise<ServerSearchHit[]>;
+  getHistoryStats: () => Promise<HistoryStats>;
+  getHistoryProgress: () => Promise<HistoryProgress>;
+  estimateHistoryIndex: (tabId?: string) => Promise<HistoryEstimate>;
+  harvestHistory: (tabId?: string) => Promise<number>;
+  startHistoryIndex: (tabId?: string) => Promise<HistoryProgress>;
+  stopHistoryIndex: () => Promise<void>;
+  openHistoryEntry: (tabId: string, url: string) => Promise<void>;
+  clearHistory: () => Promise<void>;
   onStateChanged: (listener: (state: AppState) => void) => () => void;
   onMenuAction: (listener: (action: MenuAction) => void) => () => void;
   onPreferencesChanged: (listener: (preferences: Preferences) => void) => () => void;
   onDownloadsChanged: (listener: (downloads: DownloadRecord[]) => void) => () => void;
   onGoogleSignInDone: (listener: (result: GoogleSignInResult) => void) => () => void;
+  onHistoryProgress: (listener: (progress: HistoryProgress) => void) => () => void;
+  onHistoryReport: (listener: (report: HistoryReport) => void) => () => void;
 }
 
 export const IPC_CHANNELS = {
@@ -127,9 +147,21 @@ export const IPC_CHANNELS = {
   cancelDownload: 'allai:cancel-download',
   showDownload: 'allai:show-download',
   openDownload: 'allai:open-download',
+  searchHistory: 'allai:search-history',
+  searchServerHistory: 'allai:search-server-history',
+  getHistoryStats: 'allai:get-history-stats',
+  getHistoryProgress: 'allai:get-history-progress',
+  estimateHistoryIndex: 'allai:estimate-history-index',
+  harvestHistory: 'allai:harvest-history',
+  startHistoryIndex: 'allai:start-history-index',
+  stopHistoryIndex: 'allai:stop-history-index',
+  openHistoryEntry: 'allai:open-history-entry',
+  clearHistory: 'allai:clear-history',
   stateChanged: 'allai:event:state-changed',
   menuAction: 'allai:event:menu-action',
   preferencesChanged: 'allai:event:preferences-changed',
   downloadsChanged: 'allai:event:downloads-changed',
-  googleSignInDone: 'allai:event:google-sign-in-done'
+  googleSignInDone: 'allai:event:google-sign-in-done',
+  historyProgress: 'allai:event:history-progress',
+  historyReport: 'allai:event:history-report'
 } as const;

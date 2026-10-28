@@ -61,4 +61,14 @@ export interface Preferences {
   reuseGoogleSignIn: boolean;
   /** Base interface font size in px: 13 (default), 14, 15 or 16. */
   uiFontSize: number;
+  /**
+   * Capture the text of conversations you open into a local, searchable index.
+   * Everything stays on disk in the app's userData folder.
+   */
+  historyIndexEnabled: boolean;
+  /**
+   * Fill the index from a hidden window in the background. Off by default: it
+   * walks older conversations at a human pace, so it is opt-in.
+   */
+  historyBackfillEnabled: boolean;
 }

@@ -54,13 +54,18 @@ profiles.
   16 px in **Settings → Interface size**; websites keep their own zoom level.
 - **Tabs stay loaded** — no reload when switching; audio from inactive tabs is
   muted automatically.
-- **Search across services** — `Cmd/Ctrl+Shift+F` searches the rendered text of
-  every tab, including phrases split across inline elements, shows match counts
-  and a snippet, and jumps to the right service on click. The app remembers the
-  conversation that was open in each tab and reopens it after a restart. Hits
-  that come only from a service's chat list are labelled **chat title**, and
-  clicking one opens that chat first. (Loaded pages only — it is not an index of
-  remote chat history.)
+- **Search across services, including closed chats** — `Cmd/Ctrl+Shift+F` looks
+  in three places: a local index of conversations you have already opened, the
+  text that is rendered in the tabs right now, and — for ChatGPT — ChatGPT's own
+  server-side history. Hits show the service, a snippet and when the chat was
+  captured; clicking one switches to the tab and opens that conversation.
+- **Optional background indexing** — **Settings → History search** can fill the
+  local index with older conversations. It runs in a hidden window, one chat at
+  a time, 3–8 seconds apart, and stops on a rate limit or a captcha. Off by
+  default because services may treat fast automated reading as a bot. A thin bar
+  at the bottom shows the service, the chat being read, the count and a **Stop**
+  button; when the run ends you get a report with the saved, queued and failed
+  conversations.
 - **Send a prompt to all services** — `Cmd/Ctrl+Shift+Enter` opens a small
   composer that inserts the same prompt into every open service at once. It
   inserts only by default; tick **Also press send** to submit without reviewing
@@ -188,24 +193,58 @@ methods are always per-tab and are never shared.
 
 ### Search across services
 
-Press `Cmd/Ctrl+Shift+F` (or use **View → Find in All Services…**) to search the
-content of every open tab at once. Results show the service, the number of
-matches and a short excerpt; clicking a result switches to that tab and
-highlights the match with the normal find bar.
+Press `Cmd/Ctrl+Shift+F` (or use **View → Find in All Services…**). The panel
+merges three sources, in this order:
 
-The search runs over what each page has currently loaded: the open conversation
-plus whatever the service has rendered in its sidebar. It is not an index of
-remote chat history, so a conversation that was never opened cannot be found.
-Two things make this less surprising in practice:
+1. **Indexed history** — conversations captured on this machine. Every chat you
+   open is stored after it renders, so closing the tab no longer makes it
+   disappear from search. Results show the title, a snippet and the age of the
+   capture; a result marked **title only** was collected from the service's chat
+   list before its text was read.
+2. **Open pages** — the live text of the tabs, including phrases split across
+   inline elements. This is also where **chat title** hits come from: clicking
+   one opens that chat first and then highlights the match.
+3. **ChatGPT's own index** — ChatGPT keeps a server-side full-text index of all
+   conversations, including ones this app never opened. When a ChatGPT tab is
+   present, its search results appear above the local ones. Claude, Perplexity
+   and the rest do not expose a usable history search, so they rely on the local
+   index.
 
-- The app stores the URL of the conversation that was open in each tab and
-  reopens it on the next launch, so yesterday's chat is still searchable today.
-- Matches that exist only in the service's chat list are marked **chat title**.
-  Clicking such a result opens that chat in the service first, then highlights
-  the text.
+#### Local history index
 
-The panel also lists which services were scanned without a match, and how many
-characters were scanned.
+The index lives in `history/entries.jsonl` inside the app's data folder. Only
+the rendered conversation text is kept, the sidebar is stripped before capture,
+and nothing is uploaded. **Settings → History search** has two switches:
+
+- **Index conversations locally** (on by default) — capture as you browse, and
+  answer search queries from the index.
+- **Fill older chats in the background** (off by default) — a hidden window
+  walks the service's chat list one conversation at a time. It is deliberately
+  slow: sequential requests, a 3–8 second pause between chats, an occasional
+  longer break, and an immediate stop on `429`/`403`, a captcha or a
+  "verify you are a human" page. The window is positioned off-screen with zero
+  opacity instead of being hidden, because a hidden window reports
+  `document.visibilityState = "hidden"`, which several services treat as a bot
+  signal.
+
+**Index now** first shows a confirmation with the number of conversations it
+found and a rough time estimate (page load + settle + the pause between chats).
+While it runs, a bar at the bottom of the window shows the service, the current
+conversation, the processed/total count and **Stop**. When the run ends, a
+report shows how many conversations were saved, how many were queued and which
+ones could not be read, with a reason and a link: opening any of them once is
+enough to add it to the index. Progress is not resumed automatically after a
+restart — press **Index now** again.
+
+**Keeping the index current.** With background indexing on, the app also does a
+small top-up pass: two minutes after a service is added (including one that was
+removed and added back) and then at most once every six hours per service, it
+re-reads the chat list and reads up to fifteen conversations that have no stored
+text yet. A chat deleted in the service disappears from the list, so it is not
+re-indexed; the old local copy is dropped when the tab is closed, because closing
+a tab already wipes that service's profile.
+
+**Clear index** deletes the local file.
 
 ### Send a prompt to all services
 
@@ -243,6 +282,12 @@ reopening it means signing in again. This keeps stale credentials from piling up
 
 ### Known limitations
 
+- The local index only contains what the app has seen: conversations you opened,
+  plus whatever the background pass managed to read. A chat that was never
+  opened and never backfilled cannot be found.
+- ChatGPT history search uses an undocumented endpoint of the web app. It is
+  treated as an optional accelerator: if it changes or fails, local search keeps
+  working and the section simply stays empty.
 - A few sites load a third-party session-replay SDK that can spin the renderer
   inside Electron. Suno is the current example: its login popup is handled
   correctly, but the page itself may stay on “Redirecting…”. Use the **↗** button
@@ -257,7 +302,9 @@ reopening it means signing in again. This keeps stale credentials from piling up
 ## Security and privacy
 
 ALLAI-CHAT is a local browser shell. It does not have a backend, an account
-system, telemetry, crash reporting or analytics. Network traffic comes from the
+system, telemetry, crash reporting or analytics. The search history index is a
+local file in the app's data folder; it is never uploaded and can be deleted from
+**Settings → History search → Clear index**. Network traffic comes from the
 AI websites you open, plus the update check against GitHub Releases (no
 identifiers are sent).
 

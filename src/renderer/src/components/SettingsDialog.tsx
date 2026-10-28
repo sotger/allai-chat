@@ -23,6 +23,11 @@ export function SettingsDialog() {
   const chooseDownloadDirectory = useAppStore((s) => s.chooseDownloadDirectory);
   const openGoogleSignIn = useAppStore((s) => s.openGoogleSignIn);
   const syncGoogleSignIn = useAppStore((s) => s.syncGoogleSignIn);
+  const historyStats = useAppStore((s) => s.historyStats);
+  const historyProgress = useAppStore((s) => s.historyProgress);
+  const setIndexConfirmOpen = useAppStore((s) => s.setIndexConfirmOpen);
+  const stopHistoryIndex = useAppStore((s) => s.stopHistoryIndex);
+  const clearHistory = useAppStore((s) => s.clearHistory);
 
   if (!open) return null;
 
@@ -69,6 +74,74 @@ export function SettingsDialog() {
               </button>
             ))}
           </div>
+        </section>
+
+        <section className="settings-section">
+          <h3>History search</h3>
+          <p className="muted">
+            Global search can look inside conversations you have already opened, not only the
+            ones that are open right now. Everything stays in a local file in the app's data
+            folder and is never uploaded.
+          </p>
+          <label className="settings-check">
+            <input
+              type="checkbox"
+              checked={preferences.historyIndexEnabled}
+              onChange={(event) => void updatePreferences({ historyIndexEnabled: event.target.checked })}
+            />
+            <span>
+              Index conversations locally
+              <span className="settings-help">
+                Captures the text of each chat after it renders, so a closed conversation is
+                still searchable. Turning this off stops capture; use "Clear index" to delete
+                what is already stored.
+              </span>
+            </span>
+          </label>
+          <label className="settings-check">
+            <input
+              type="checkbox"
+              checked={preferences.historyBackfillEnabled}
+              disabled={!preferences.historyIndexEnabled}
+              onChange={(event) => void updatePreferences({ historyBackfillEnabled: event.target.checked })}
+            />
+            <span>
+              Fill older chats in the background
+              <span className="settings-help">
+                Opens a hidden window and reads older conversations one at a time, 3–8 seconds
+                apart, and stops on a rate limit or a captcha. Off by default: a burst of
+                automated page loads is what makes a service treat an app as a bot.
+              </span>
+            </span>
+          </label>
+          <div className="settings-row">
+            <button
+              className="secondary-button"
+              onClick={() => setIndexConfirmOpen(true)}
+              disabled={!preferences.historyIndexEnabled || historyProgress.running}
+            >
+              Index now
+            </button>
+            <button
+              className="secondary-button"
+              onClick={() => void stopHistoryIndex()}
+              disabled={!historyProgress.running}
+            >
+              Stop
+            </button>
+            <button
+              className="secondary-button danger-button"
+              onClick={() => void clearHistory()}
+              disabled={historyStats.entries === 0}
+            >
+              Clear index
+            </button>
+          </div>
+          <p className="muted settings-hint">
+            {historyStats.entries.toLocaleString()} conversations stored
+            {historyStats.withText > 0 ? `, ${historyStats.withText.toLocaleString()} with full text` : ''}
+            {historyStats.characters > 0 ? `, ${Math.max(1, Math.round(historyStats.characters / 1024)).toLocaleString()} KB` : ''}.
+          </p>
         </section>
 
         <section className="settings-section">

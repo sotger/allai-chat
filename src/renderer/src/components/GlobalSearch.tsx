@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+
+import type { HistoryHit, ServerSearchHit } from '@shared/history';
 import { useAppStore } from '../store';
 
 interface MatchResult {
@@ -21,9 +23,18 @@ function renderSnippet(text: string, query: string) {
   );
 }
 
+function formatAge(timestamp: number): string {
+  const days = Math.floor((Date.now() - timestamp) / 86_400_000);
+  if (days <= 0) return 'today';
+  if (days === 1) return 'yesterday';
+  return `${days} days ago`;
+}
+
 export function GlobalSearch() {
   const open = useAppStore((s) => s.globalFindOpen);
   const tabs = useAppStore((s) => s.tabs);
+  const historyStats = useAppStore((s) => s.historyStats);
+  const indexing = useAppStore((s) => s.historyProgress.running);
   const setGlobalFindOpen = useAppStore((s) => s.setGlobalFindOpen);
   const setFindOpen = useAppStore((s) => s.setFindOpen);
   const setFindQuery = useAppStore((s) => s.setFindQuery);
@@ -32,6 +43,8 @@ export function GlobalSearch() {
 
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Record<string, MatchResult>>({});
+  const [historyHits, setHistoryHits] = useState<HistoryHit[]>([]);
+  const [serverHits, setServerHits] = useState<ServerSearchHit[]>([]);
   const [searching, setSearching] = useState(false);
   const runToken = useRef(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -40,6 +53,8 @@ export function GlobalSearch() {
     if (!open) return;
     setQuery('');
     setResults({});
+    setHistoryHits([]);
+    setServerHits([]);
     setSearching(false);
     requestAnimationFrame(() => inputRef.current?.focus());
   }, [open]);
@@ -48,9 +63,15 @@ export function GlobalSearch() {
     const token = ++runToken.current;
     setSearching(true);
     setResults({});
+    setHistoryHits([]);
+    setServerHits([]);
     try {
-      const hits = await window.allai.searchAll(search);
+      const [hits, history] = await Promise.all([
+        window.allai.searchAll(search),
+        window.allai.searchHistory(search).catch(() => [] as HistoryHit[])
+      ]);
       if (token !== runToken.current) return;
+
       const next: Record<string, MatchResult> = {};
       for (const hit of hits) {
         next[hit.tabId] = {
@@ -61,8 +82,18 @@ export function GlobalSearch() {
         };
       }
       setResults(next);
+      setHistoryHits(history);
     } finally {
       if (token === runToken.current) setSearching(false);
+    }
+
+    // The server-side index is slower and optional; it fills in afterwards.
+    if (search.length >= 3) {
+      void window.allai.searchServerHistory(search)
+        .then((items) => {
+          if (token === runToken.current) setServerHits(items);
+        })
+        .catch(() => undefined);
     }
   };
 
@@ -72,6 +103,8 @@ export function GlobalSearch() {
     if (search.length < 2) {
       runToken.current++;
       setResults({});
+      setHistoryHits([]);
+      setServerHits([]);
       setSearching(false);
       void window.allai.stopAllFind();
       return;
@@ -101,6 +134,12 @@ export function GlobalSearch() {
     await window.allai.openSearchResult(tabId, search, Boolean(inList));
   };
 
+  const openIndexed = async (tabId: string, url: string): Promise<void> => {
+    setGlobalFindOpen(false);
+    await setActiveTab(tabId);
+    await window.allai.openHistoryEntry(tabId, url);
+  };
+
   const rows = tabs
     .map((tab) => ({ tab, result: results[tab.id] }))
     .filter(({ result }) => (result?.matches ?? 0) > 0)
@@ -108,7 +147,7 @@ export function GlobalSearch() {
 
   const missed = tabs.filter((tab) => (results[tab.id]?.matches ?? 0) === 0);
   const totalScanned = Object.values(results).reduce((sum, result) => sum + (result.scanned ?? 0), 0);
-  const hasResults = rows.length > 0;
+  const hasResults = rows.length > 0 || historyHits.length > 0 || serverHits.length > 0;
   const showEmpty = !searching && query.trim().length >= 2 && !hasResults;
 
   return (
@@ -131,38 +170,100 @@ export function GlobalSearch() {
         </div>
 
         <div className="global-search-hint">
-          Searches the page text that is rendered in every tab. A service only exposes
-          the conversation that is open — if a chat is closed, only its sidebar title can match.
+          Searches your local index of captured conversations, the pages that are open
+          right now, and — for ChatGPT — its own server-side history.
+          {indexing && <span className="global-search-indexing"> Indexing in the background…</span>}
         </div>
 
         <div className="global-search-results">
-          {rows.map(({ tab, result }) => (
-            <button
-              key={tab.id}
-              className="global-result"
-              onClick={() => void openResult(tab.id, result?.inList)}
-            >
-              <span className="tab-badge" style={{ background: tab.color }}>{tab.icon}</span>
-              <span className="global-result-body">
-                <span className="global-result-head">
-                  <span className="global-result-label">{tab.label}</span>
-                  {result?.inList && <span className="global-result-tag">chat title</span>}
-                  <span className="global-result-count">{result?.matches}</span>
-                </span>
-                {result?.snippet && (
-                  <span className="global-result-snippet">
-                    {renderSnippet(result.snippet, query.trim())}
+          {serverHits.length > 0 && (
+            <div className="global-section">
+              <div className="global-section-title">From ChatGPT's own index</div>
+              {serverHits.map((hit) => (
+                <button
+                  key={`${hit.tabId}:${hit.url}`}
+                  className="global-result"
+                  onClick={() => void openIndexed(hit.tabId, hit.url)}
+                >
+                  <span className="tab-badge" style={{ background: '#10a37f' }}>G</span>
+                  <span className="global-result-body">
+                    <span className="global-result-head">
+                      <span className="global-result-label">{hit.title}</span>
+                      <span className="global-result-tag">{hit.service}</span>
+                    </span>
+                    {hit.snippet && (
+                      <span className="global-result-snippet">{renderSnippet(hit.snippet, query.trim())}</span>
+                    )}
                   </span>
-                )}
-              </span>
-            </button>
-          ))}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {historyHits.length > 0 && (
+            <div className="global-section">
+              <div className="global-section-title">
+                Indexed history
+                <span className="global-section-note">
+                  {historyStats.entries.toLocaleString()} conversations stored locally
+                </span>
+              </div>
+              {historyHits.slice(0, 10).map((hit) => (
+                <button
+                  key={hit.id}
+                  className="global-result"
+                  onClick={() => void openIndexed(hit.tabId, hit.url)}
+                >
+                  <span className="tab-badge" style={{ background: tabs.find((tab) => tab.id === hit.tabId)?.color ?? '#475569' }}>
+                    {tabs.find((tab) => tab.id === hit.tabId)?.icon ?? '?'}
+                  </span>
+                  <span className="global-result-body">
+                    <span className="global-result-head">
+                      <span className="global-result-label">{hit.title}</span>
+                      <span className="global-result-tag">{hit.titleOnly ? 'title only' : hit.service}</span>
+                      <span className="global-result-age">{formatAge(hit.capturedAt)}</span>
+                    </span>
+                    {hit.snippet && (
+                      <span className="global-result-snippet">{renderSnippet(hit.snippet, query.trim())}</span>
+                    )}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {rows.length > 0 && (
+            <div className="global-section">
+              <div className="global-section-title">Open pages</div>
+              {rows.map(({ tab, result }) => (
+                <button
+                  key={tab.id}
+                  className="global-result"
+                  onClick={() => void openResult(tab.id, result?.inList)}
+                >
+                  <span className="tab-badge" style={{ background: tab.color }}>{tab.icon}</span>
+                  <span className="global-result-body">
+                    <span className="global-result-head">
+                      <span className="global-result-label">{tab.label}</span>
+                      {result?.inList && <span className="global-result-tag">chat title</span>}
+                      <span className="global-result-count">{result?.matches}</span>
+                    </span>
+                    {result?.snippet && (
+                      <span className="global-result-snippet">
+                        {renderSnippet(result.snippet, query.trim())}
+                      </span>
+                    )}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
 
           {showEmpty && (
             <p className="global-search-empty">
-              No matches in the loaded pages. Conversations that are not open in a tab
-              (or not rendered yet) cannot be searched — open the chat first, or use the
-              service's own search.
+              Nothing found. {historyStats.entries === 0
+                ? 'The local index is empty: conversations are indexed as you open them, and older chats can be filled in from Settings.'
+                : 'Closed conversations that were never opened in this app are not in the local index yet.'}
             </p>
           )}
 
@@ -170,7 +271,7 @@ export function GlobalSearch() {
             <p className="global-search-empty">Searching {tabs.length} service{tabs.length === 1 ? '' : 's'}…</p>
           )}
 
-          {!searching && hasResults && missed.length > 0 && (
+          {!searching && rows.length > 0 && missed.length > 0 && (
             <p className="global-search-missed">
               No matches in {missed.map((tab) => tab.label).join(', ')}.
             </p>

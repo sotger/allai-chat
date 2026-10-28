@@ -8,7 +8,9 @@ describe('normalizePreferences', () => {
       theme: 'system',
       downloadDirectory: '/home/user/Downloads',
       reuseGoogleSignIn: true,
-      uiFontSize: 13
+      uiFontSize: 13,
+      historyIndexEnabled: true,
+      historyBackfillEnabled: false
     });
   });
 
@@ -17,12 +19,16 @@ describe('normalizePreferences', () => {
       theme: 'dark',
       downloadDirectory: '/tmp/files',
       reuseGoogleSignIn: false,
-      uiFontSize: 15
+      uiFontSize: 15,
+      historyIndexEnabled: false,
+      historyBackfillEnabled: true
     }, '/home/user/Downloads')).toEqual({
       theme: 'dark',
       downloadDirectory: '/tmp/files',
       reuseGoogleSignIn: false,
-      uiFontSize: 15
+      uiFontSize: 15,
+      historyIndexEnabled: false,
+      historyBackfillEnabled: true
     });
   });
 
@@ -35,7 +41,9 @@ describe('normalizePreferences', () => {
       theme: 'system',
       downloadDirectory: '/home/user/Downloads',
       reuseGoogleSignIn: true,
-      uiFontSize: 13
+      uiFontSize: 13,
+      historyIndexEnabled: true,
+      historyBackfillEnabled: false
     });
   });
 

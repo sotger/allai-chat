@@ -1,5 +1,59 @@
 # Changelog
 
+## 1.6.0 — 2026-10-28
+
+### Added
+
+- **Local history index.** Every conversation you open is captured after it
+  renders and stored in `history/entries.jsonl` in the app's data folder, so
+  global search finds chats that are no longer open. Captured text excludes the
+  sidebar, and nothing leaves the machine.
+- **Chat-list harvesting.** Conversation titles and links are read from each
+  service's own sidebar with site-agnostic heuristics, so the whole history
+  becomes searchable by title immediately, without opening every chat.
+- **Background indexing.** An opt-in run inside a hidden, off-screen window
+  fills the full text of older conversations. It is sequential, pauses 3–8
+  seconds between chats, takes a longer break every twelve, and stops on
+  `429`/`403`, a captcha or a "verify you are human" page. A bar at the bottom
+  of the window shows the current conversation title, the count and a Stop
+  button.
+- **ChatGPT server-side history in global search.** When a ChatGPT tab is open,
+  its own full-text conversation index is queried as well, so chats this app
+  never opened show up with server-rendered snippets.
+- **Settings → History search** with two switches, **Index now**, **Stop**,
+  **Clear index** and a stored-size summary.
+- **Confirmation with an estimate.** Starting a run first shows how many
+  conversations were found and roughly how long it will take.
+- **Report after a run.** Saved, queued and failed counts; failed conversations
+  are listed with a reason and a link, and opening one adds it to the index.
+- **Automatic top-ups.** With background indexing on, a new (or re-added)
+  service is checked two minutes after it is added, and each service is
+  re-checked at most once every six hours. Only conversations without stored
+  text are queued, at most fifteen per pass, at the same human pace.
+- **History is dropped with its tab.** Closing a service deletes the
+  conversations captured for it, matching the existing "closing a tab wipes its
+  profile" behaviour, so a re-added service starts from its current list.
+
+### Changed
+
+- Global search now merges three sources — indexed history, live open pages and
+  the ChatGPT service index — instead of scanning only the rendered tabs.
+- Search results are grouped into sections and show the service, a snippet, a
+  `title only` badge and when the chat was captured.
+- The sidebar is stripped from captured conversations, so snippets start with
+  the conversation instead of the chat list.
+- Re-visiting a chat no longer appends an identical row: a capture is written
+  only when the text or the title actually changed.
+- The indexing bar shows a static, centred conversation title instead of a
+  marquee.
+
+### Notes
+
+- Background indexing is off by default: a burst of automated page loads is what
+  makes a service treat an app as a bot.
+- `ALLAI_INDEX_MAX` and `ALLAI_INDEX_DELAY_MS` override the run size and pacing
+  for local testing only.
+
 ## 1.5.0 — 2026-10-27
 
 ### Added
