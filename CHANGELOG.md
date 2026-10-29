@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.7.1 — 2026-10-30
+
+### Fixed
+
+- **Perplexity's full history is discovered.** The library (`View all`) renders
+  its sessions as `div[role=row]` without links, so harvesting only saw the
+  recent sidebar. The app now follows a “View all” link from a chat page, reads
+  the row's `href`/title from the React props, scrolls the main list and adds
+  every session to the unindexed queue. On the author's profile this found 588
+  conversations instead of the 34 visible in the sidebar.
+- Deep harvesting now scrolls the main content list (not only `nav`/`aside`),
+  collects up to 3,000 links and allows 60 seconds for the pass.
+- Titles from list rows are capped at 200 characters so a long prompt does not
+  become an unwieldy queue row.
+
 ## 1.7.0 — 2026-10-30
 
 ### Added

@@ -52,6 +52,18 @@ export function harvestScript(options: { scroll?: boolean } = {}): string {
   const skip = /\\/(settings|pricing|login|logout|auth|signin|signup|register|help|about|terms|privacy|downloads?|new|explore|discover|apps|plugins|projects\\/new)(\\/|$)/i;
   const found = new Map();
 
+  const add = (url, title) => {
+    const clean = norm(title).slice(0, 200);
+    if (clean.length < 2) return;
+    let parsed;
+    try { parsed = new URL(url, location.href); } catch { return; }
+    if (parsed.origin !== location.origin) return;
+    if (skip.test(parsed.pathname)) return;
+    parsed.hash = '';
+    const key = parsed.href.replace(/\\/+$/, '');
+    if (!found.has(key)) found.set(key, { url: key, title: clean });
+  };
+
   const collect = () => {
     for (const anchor of document.querySelectorAll('a[href]')) {
       let url;
@@ -59,7 +71,7 @@ export function harvestScript(options: { scroll?: boolean } = {}): string {
       if (url.origin !== location.origin) continue;
       if (skip.test(url.pathname)) continue;
       const title = norm(anchor.getAttribute('aria-label') || anchor.innerText || '');
-      if (title.length < 2 || title.length > 200) continue;
+      if (title.length < 2) continue;
       const segments = url.pathname.split('/').filter(Boolean);
       const idLike = segments.some((segment) => /[0-9a-f]{8,}/i.test(segment) || /^\\d{6,}$/.test(segment));
       // Navigation rows without an id in the path are accepted only when they
@@ -69,17 +81,55 @@ export function harvestScript(options: { scroll?: boolean } = {}): string {
       const container = anchor.closest('ul, ol, nav, aside, [role="list"], [role="navigation"]');
       if (container) listLike = container.querySelectorAll('a[href]').length >= 5;
       if (!idLike && !listLike) continue;
-      url.hash = '';
-      const key = url.href.replace(/\\/+$/, '');
-      if (!found.has(key)) found.set(key, { url: key, title });
+      add(url.href, title);
+    }
+  };
+
+  // Perplexity's library renders each session as div[role=row] without an
+  // href. The thread object (href + title) lives in the React props, so read
+  // it from the fiber. This is what makes "View all" reachable without clicking
+  // every row.
+  const collectThreads = () => {
+    const findThread = (value, depth, budget) => {
+      if (!value || typeof value !== 'object' || depth > 6 || budget.count > 400) return null;
+      budget.count += 1;
+      if (typeof value.href === 'string'
+        && typeof value.title === 'string'
+        && /\\/search\\/[0-9a-f-]{8,}/i.test(value.href)) return value;
+      const keys = Object.keys(value);
+      for (let index = 0; index < keys.length; index += 1) {
+        const key = keys[index];
+        if (key === 'ref' || key === 'style' || key === 'type' || key.charAt(0) === '_') continue;
+        const hit = findThread(value[key], depth + 1, budget);
+        if (hit) return hit;
+      }
+      return null;
+    };
+    const rows = document.querySelectorAll('main [role="row"], main [role="button"], main [role="link"]');
+    for (const row of rows) {
+      if (norm(row.innerText).length < 2) continue;
+      const fiberKey = Object.keys(row).find((key) => key.indexOf('__reactFiber$') === 0);
+      if (!fiberKey) continue;
+      let fiber = row[fiberKey];
+      for (let depth = 0; depth < 8 && fiber; depth += 1, fiber = fiber.return) {
+        const thread = findThread(fiber.memoizedProps, 0, { count: 0 });
+        if (thread) {
+          add(thread.href, thread.title);
+          break;
+        }
+      }
     }
   };
 
   collect();
+  collectThreads();
 
   if (${scroll ? 'true' : 'false'}) {
-    // Load more history rows by scrolling the tallest sidebar container.
+    // Scroll the tallest sidebar, or the main list when it contains table rows
+    // (Perplexity's library puts every session in <main>, not in the sidebar).
     const roots = [...document.querySelectorAll('nav, aside, [role="navigation"], [role="complementary"]')];
+    const main = document.querySelector('main, [role="main"]');
+    if (main && main.querySelectorAll('[role="row"]').length >= 5) roots.push(main);
     let scroller = null;
     let best = 0;
     for (const root of roots) {
@@ -89,10 +139,20 @@ export function harvestScript(options: { scroll?: boolean } = {}): string {
       }
     }
     if (scroller) {
-      for (let step = 0; step < 6; step++) {
+      let lastSize = found.size;
+      let stale = 0;
+      for (let step = 0; step < 40; step += 1) {
         scroller.scrollTop = scroller.scrollHeight;
         await new Promise((resolve) => setTimeout(resolve, 700));
         collect();
+        collectThreads();
+        if (found.size === lastSize) {
+          stale += 1;
+          if (stale >= 2) break;
+        } else {
+          stale = 0;
+          lastSize = found.size;
+        }
       }
       scroller.scrollTop = 0;
     }
@@ -100,14 +160,30 @@ export function harvestScript(options: { scroll?: boolean } = {}): string {
 
   const here = norm(document.title);
   if (here) {
-    const key = location.href.split('#')[0].replace(/\\/+$/, '');
-    const segments = new URL(key).pathname.split('/').filter(Boolean);
+    const segments = new URL(location.href).pathname.split('/').filter(Boolean);
     const idLike = segments.some((segment) => /[0-9a-f]{8,}/i.test(segment) || /^\\d{6,}$/.test(segment));
-    if (idLike && !found.has(key)) found.set(key, { url: key, title: here });
+    if (idLike) add(location.href, here);
   }
 
-  return [...found.values()].slice(0, 500);
+  return [...found.values()].slice(0, 3000);
 })()`;
+}
+
+const listLinkScript = `(() => {
+  const norm = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+  const link = [...document.querySelectorAll('a[href]')].find((anchor) => {
+    const text = norm(anchor.getAttribute('aria-label') || anchor.innerText || '');
+    if (!/^(view|see|show) all$/i.test(text)) return false;
+    try { return new URL(anchor.href, location.href).origin === location.origin; } catch { return false; }
+  });
+  return link ? link.href : '';
+})()`;
+
+/** The "View all" link that leads from a chat page to the full history list. */
+export async function findListUrl(contents: WebContents): Promise<string | undefined> {
+  if (contents.isDestroyed()) return undefined;
+  const url = await withTimeout(contents.executeJavaScript(listLinkScript), 5000) as string | undefined;
+  return typeof url === 'string' && /^https?:/i.test(url) ? url : undefined;
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | undefined> {
@@ -182,7 +258,7 @@ export async function harvestTitles(
   if (contents.isDestroyed()) return [];
   const links = await withTimeout(
     contents.executeJavaScript(harvestScript({ scroll: options.deep })) as Promise<HarvestedLink[]>,
-    options.timeoutMs ?? (options.deep ? 25_000 : 8_000)
+    options.timeoutMs ?? (options.deep ? 60_000 : 8_000)
   );
   if (!Array.isArray(links)) return [];
   const seen = new Set<string>();
@@ -191,7 +267,7 @@ export async function harvestTitles(
     if (!link?.url || !isIndexableUrl(link.url)) continue;
     // Navigation rows ("Skip to main content") are not conversations and must
     // not enter the queue: opening them never produces readable text.
-    const title = cleanHistoryTitle(link.title);
+    const title = cleanHistoryTitle(link.title).slice(0, 200);
     if (!title) continue;
     const key = canonicalHistoryUrl(link.url);
     if (seen.has(key)) continue;

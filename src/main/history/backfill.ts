@@ -1,6 +1,7 @@
 import { BrowserWindow, type Session, type WebContents } from 'electron';
 
 import {
+  canonicalHistoryUrl,
   chatKey,
   cleanHistoryTitle,
   historyId,
@@ -15,7 +16,7 @@ import {
 } from '@shared/history';
 import type { ServiceTab } from '@shared/types';
 
-import { captureScript, harvestTitles } from './capture';
+import { captureScript, findListUrl, harvestTitles } from './capture';
 import type { HistoryStore } from './store';
 
 // Env overrides exist for local testing and screenshots only; the defaults are
@@ -270,6 +271,16 @@ export class HistoryBackfill {
       // scrolling the user's sidebar would be disruptive.
       const loaded = await this.load(contents, tab.url);
       if (loaded) await this.waitForStableText(contents);
+      // A chat page only shows recent sidebar links; the full history usually
+      // sits behind "View all" (Perplexity's /library). Load that page in the
+      // same hidden window before harvesting.
+      if (loaded) {
+        const listUrl = await findListUrl(contents);
+        if (listUrl && canonicalHistoryUrl(listUrl) !== canonicalHistoryUrl(contents.getURL())) {
+          const listLoaded = await this.load(contents, listUrl);
+          if (listLoaded) await this.waitForStableText(contents);
+        }
+      }
       const deep = loaded ? await harvestTitles(contents, { deep: true }) : [];
       this.storeTitles(tab, deep.length > 0 ? deep : visible);
 
@@ -492,7 +503,6 @@ export class HistoryBackfill {
       return false;
     }
   }
-
   /**
    * The services are SPAs: `did-stop-loading` fires long before the answer is
    * in the DOM, and sometimes never fires at all. Wait until the rendered text
