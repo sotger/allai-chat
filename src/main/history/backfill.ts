@@ -1,9 +1,12 @@
 import { BrowserWindow, type Session, type WebContents } from 'electron';
 
 import {
+  chatKey,
+  cleanHistoryTitle,
   historyId,
   isAuthUrl,
   looksLikeChatUrl,
+  mergeIndexQueue,
   normalizeText,
   type HistoryProgress,
   type HistoryReport,
@@ -42,10 +45,6 @@ interface BackfillOptions {
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-
-function chatKey(url: string): string | undefined {
-  return /[0-9a-f]{8,}/i.exec(url)?.[0]?.toLowerCase();
-}
 
 export interface BackfillRunOptions {
   reason?: 'manual' | 'auto';
@@ -117,7 +116,9 @@ export class HistoryBackfill {
         failures: summary.failures,
         startedAt,
         reason,
-        services: [summary]
+        services: [summary],
+        stopped: this.stopRequested,
+        remaining: this.options.store.unindexed(tab.id).length
       });
       return this.finish({ service: tab.label, done: summary.total, total: summary.total });
     } finally {
@@ -172,6 +173,7 @@ export class HistoryBackfill {
     const total = summaries.reduce((sum, item) => sum + item.total, 0);
     const saved = summaries.reduce((sum, item) => sum + item.saved, 0);
     const failures = summaries.flatMap((item) => item.failures);
+    const remaining = tabs.reduce((sum, tab) => sum + this.options.store.unindexed(tab.id).length, 0);
     const label = tabs.length === 1 ? tabs[0].label : `${tabs.length} services`;
     this.emitReport({
       tabId: activeId ?? tabs[0].id,
@@ -181,7 +183,9 @@ export class HistoryBackfill {
       failures,
       startedAt,
       reason,
-      services: summaries
+      services: summaries,
+      stopped: this.stopRequested,
+      remaining
     });
     return this.finish({ service: label, done: total, total });
   }
@@ -227,13 +231,26 @@ export class HistoryBackfill {
       const deep = loaded ? await harvestTitles(contents, { deep: true }) : [];
       this.storeTitles(tab, deep.length > 0 ? deep : visible);
 
-      const candidates = (deep.length > 0 ? deep : visible)
+      // The visible/deep sidebar is not enough: older chats and ChatGPT
+      // project conversations disappear from it, so the queue stored on disk is
+      // merged in. Without this, "Index now" reports nothing to do while the
+      // index still has hundreds of conversations without text.
+      const indexed = this.options.store.indexedChatKeys(tab.id);
+      const fresh = (deep.length > 0 ? deep : visible)
         .filter((link) => looksLikeChatUrl(link.url))
         .filter((link) => {
+          const key = chatKey(link.url);
+          if (key && indexed.has(key)) return false;
           const existing = this.options.store.get(historyId(tab.id, link.url));
           return !existing || existing.titleOnly;
+        });
+      const queued = this.options.store.unindexed(tab.id)
+        .filter((entry) => {
+          const key = chatKey(entry.url);
+          return !key || !indexed.has(key);
         })
-        .slice(0, runOptions.limit);
+        .map((entry) => ({ url: entry.url, title: entry.title }));
+      const candidates = mergeIndexQueue(fresh, queued, runOptions.limit);
 
       total = candidates.length;
       if (candidates.length === 0) return { tabId: tab.id, service: tab.label, total: 0, saved: 0, failures: failuresList };
@@ -305,17 +322,22 @@ export class HistoryBackfill {
         if (text.length >= 40) {
           consecutiveFailures = 0;
           saved += 1;
+          const savedId = historyId(tab.id, page.url);
           this.options.store.upsert({
-            id: historyId(tab.id, page.url),
+            id: savedId,
             tabId: tab.id,
             providerId: tab.providerId,
             service: tab.label,
             url: page.url,
-            title: normalizeText(page.title) || link.title,
+            title: cleanHistoryTitle(page.title, link.title || tab.label),
             text,
             capturedAt: Date.now(),
             titleOnly: false
           });
+          // A redirect may give the conversation a different canonical URL.
+          // Drop the queued title-only row so it does not stay in the queue.
+          const linkId = historyId(tab.id, link.url);
+          if (linkId !== savedId) this.options.store.removeById(linkId);
         } else {
           consecutiveFailures += 1;
           failuresList.push({ title: link.title, url: link.url, reason: 'no readable conversation text was rendered' });
@@ -342,8 +364,11 @@ export class HistoryBackfill {
   }
 
   private storeTitles(tab: ServiceTab, links: Array<{ url: string; title: string }>): void {
+    const indexed = this.options.store.indexedChatKeys(tab.id);
     for (const link of links) {
       if (!looksLikeChatUrl(link.url)) continue;
+      const key = chatKey(link.url);
+      if (key && indexed.has(key)) continue;
       const id = historyId(tab.id, link.url);
       if (this.options.store.get(id)) continue;
       this.options.store.upsert({
@@ -352,7 +377,7 @@ export class HistoryBackfill {
         providerId: tab.providerId,
         service: tab.label,
         url: link.url,
-        title: normalizeText(link.title) || tab.label,
+        title: cleanHistoryTitle(link.title, tab.label),
         text: '',
         capturedAt: Date.now(),
         titleOnly: true

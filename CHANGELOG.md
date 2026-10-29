@@ -51,6 +51,24 @@
 - The indexing bar shows a static, centred conversation title instead of a
   marquee, plus the position in a multi-service run (`3/7`).
 
+### Fixed
+
+- **Index now reads the local queue, not only the visible sidebar.** Older
+  conversations and ChatGPT project chats are re-read even when they are no
+  longer in the chat list, so the run can actually finish the index instead of
+  reporting “nothing to do” while conversations without text remain.
+- The estimate and the report count queued conversations. The report says how
+  many are still left in the queue and no longer claims everything was saved
+  when the run only covered the visible list. “Queued” became “attempted”.
+- Automatic top-ups no longer open the report dialog; only a manual run does.
+- A queued conversation that is already indexed under another URL variant is
+  dropped, and several variants of the same chat are collapsed into one.
+- Navigation labels such as “Skip to main content” are no longer stored as chat
+  titles; a queued row with no other title falls back to the service name.
+- The conversation identity now uses the last id segment in the URL, so two
+  chats inside one ChatGPT project are no longer treated as the same chat when
+  a page redirects.
+
 ### Notes
 
 - Background indexing is off by default: a burst of automated page loads is what

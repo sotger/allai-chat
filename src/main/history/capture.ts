@@ -2,6 +2,7 @@ import type { WebContents } from 'electron';
 
 import {
   canonicalHistoryUrl,
+  cleanHistoryTitle,
   historyId,
   isIndexableUrl,
   normalizeText,
@@ -146,7 +147,7 @@ export function toHistoryEntry(tab: ServiceTab, page: CapturedPage, now = Date.n
     providerId: tab.providerId,
     service: tab.label,
     url: page.url,
-    title: page.title || tab.label,
+    title: cleanHistoryTitle(page.title, tab.label),
     text,
     capturedAt: now,
     titleOnly: false
@@ -162,7 +163,7 @@ export function titleEntry(tab: ServiceTab, url: string, title: string, now = Da
     providerId: tab.providerId,
     service: tab.label,
     url,
-    title: normalizeText(title) || tab.label,
+    title: cleanHistoryTitle(title, tab.label),
     text: '',
     capturedAt: now,
     titleOnly: true
@@ -185,11 +186,17 @@ export async function harvestTitles(
   );
   if (!Array.isArray(links)) return [];
   const seen = new Set<string>();
-  return links.filter((link) => {
-    if (!link?.url || !isIndexableUrl(link.url)) return false;
+  const cleaned: HarvestedLink[] = [];
+  for (const link of links) {
+    if (!link?.url || !isIndexableUrl(link.url)) continue;
+    // Navigation rows ("Skip to main content") are not conversations and must
+    // not enter the queue: opening them never produces readable text.
+    const title = cleanHistoryTitle(link.title);
+    if (!title) continue;
     const key = canonicalHistoryUrl(link.url);
-    if (seen.has(key)) return false;
+    if (seen.has(key)) continue;
     seen.add(key);
-    return true;
-  });
+    cleaned.push({ url: link.url, title });
+  }
+  return cleaned;
 }

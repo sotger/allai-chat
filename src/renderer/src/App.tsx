@@ -55,7 +55,19 @@ export default function App() {
   }), []);
 
   useEffect(() => window.allai.onHistoryReport((report) => {
-    useAppStore.getState().setHistoryReport(report);
+    const store = useAppStore.getState();
+    // Automatic top-ups are small and frequent: they must not interrupt with a
+    // modal. The bottom bar shows progress; only failures deserve a toast.
+    if (report.reason !== 'manual') {
+      if (report.failures.length > 0) {
+        store.setNotice(
+          `Automatic indexing saved ${report.saved} conversation${report.saved === 1 ? '' : 's'}, `
+          + `${report.failures.length} could not be read.`
+        );
+      }
+      return;
+    }
+    store.setHistoryReport(report);
   }), []);
 
   const indexingRunning = useAppStore((state) => state.historyProgress.running);

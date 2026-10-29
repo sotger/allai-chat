@@ -101,6 +101,94 @@ describe('HistoryStore', () => {
     expect(reloaded.stats().entries).toBe(1);
   });
 
+  it('tracks conversations that still have no text', async () => {
+    const dir = tempDir();
+    const store = new HistoryStore(dir);
+    await store.load();
+
+    store.upsert(entry('a', 'full text'));
+    store.upsert(entry('b', '', { tabId: 't1' }));
+    store.upsert(entry('c', '', { tabId: 't2' }));
+
+    expect(store.unindexed().map((item) => item.id)).toEqual(['b', 'c']);
+    expect(store.unindexed('t1').map((item) => item.id)).toEqual(['b']);
+    expect(store.stats().withoutText).toBe(2);
+  });
+
+  it('forgets a row permanently with a tombstone', async () => {
+    const dir = tempDir();
+    const store = new HistoryStore(dir);
+    await store.load();
+    store.upsert(entry('a', 'keep'));
+    store.upsert(entry('b', ''));
+    store.flushSync();
+
+    store.removeById('b');
+    store.flushSync();
+
+    expect(store.get('b')).toBeUndefined();
+    expect(store.stats().entries).toBe(1);
+
+    const reloaded = new HistoryStore(dir);
+    await reloaded.load();
+    expect(reloaded.get('b')).toBeUndefined();
+    expect(reloaded.unindexed()).toHaveLength(0);
+  });
+
+  it('drops a queued row when the same chat is already indexed under another url', async () => {
+    const dir = tempDir();
+    const first = new HistoryStore(dir);
+    await first.load();
+    first.upsert(entry('indexed', 'full text', {
+      url: 'https://chatgpt.com/g/g-p-6a3875dab9b08191bdf5915822205007-igra-everspace-2/c/6a47b398-2390-83eb'
+    }));
+    first.upsert(entry('queued', '', {
+      url: 'https://chatgpt.com/g/g-p-6a3875dab9b08191bdf5915822205007/c/6a47b398-2390-83eb'
+    }));
+    first.flushSync();
+
+    const second = new HistoryStore(dir);
+    await second.load();
+
+    expect(second.stats()).toMatchObject({ entries: 1, withText: 1, withoutText: 0 });
+    expect(second.unindexed()).toHaveLength(0);
+    expect(lines(dir)).toHaveLength(1);
+  });
+
+  it('keeps one queued row when a chat has several url variants', async () => {
+    const dir = tempDir();
+    const first = new HistoryStore(dir);
+    await first.load();
+    first.upsert(entry('short', '', {
+      title: 'Queued',
+      url: 'https://chatgpt.com/g/g-p-6a3875dab9b08191bdf5915822205007/c/6a47b398-2390-83eb'
+    }));
+    first.upsert(entry('slug', '', {
+      title: 'Queued conversation',
+      url: 'https://chatgpt.com/g/g-p-6a3875dab9b08191bdf5915822205007-igra-everspace-2/c/6a47b398-2390-83eb'
+    }));
+    first.flushSync();
+
+    const second = new HistoryStore(dir);
+    await second.load();
+
+    const queued = second.unindexed();
+    expect(queued).toHaveLength(1);
+    expect(queued[0].title).toBe('Queued conversation');
+  });
+
+  it('replaces a navigation label with the service name on load', async () => {
+    const dir = tempDir();
+    const first = new HistoryStore(dir);
+    await first.load();
+    first.upsert(entry('a', '', { title: 'Skip to main content' }));
+    first.flushSync();
+
+    const second = new HistoryStore(dir);
+    await second.load();
+    expect(second.get('a')?.title).toBe('ChatGPT');
+  });
+
   it('clears everything', async () => {
     const dir = tempDir();
     const store = new HistoryStore(dir);

@@ -140,6 +140,7 @@ export function SettingsDialog() {
           <p className="muted settings-hint">
             {historyStats.entries.toLocaleString()} conversations stored
             {historyStats.withText > 0 ? `, ${historyStats.withText.toLocaleString()} with full text` : ''}
+            {historyStats.withoutText > 0 ? `, ${historyStats.withoutText.toLocaleString()} still waiting in the queue` : ''}
             {historyStats.characters > 0 ? `, ${Math.max(1, Math.round(historyStats.characters / 1024)).toLocaleString()} KB` : ''}.
           </p>
         </section>

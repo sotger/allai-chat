@@ -63,7 +63,7 @@ export function IndexConfirmDialog() {
           {estimate === null
             ? 'Counting conversations…'
             : estimate.candidates === 0
-              ? 'Everything found in the chat list is already indexed. You can still run it to re-read the sidebars.'
+              ? 'Nothing is waiting in the queue for these services right now.'
               : `${estimate.candidates.toLocaleString()} conversation${estimate.candidates === 1 ? '' : 's'} across ${queuedServices.length} service${queuedServices.length === 1 ? '' : 's'} — roughly ${formatDuration(estimate.estimatedMs)}.`}
           {queuedServices.length > 1 && (
             <span className="index-confirm-breakdown">
@@ -74,9 +74,11 @@ export function IndexConfirmDialog() {
         </div>
 
         <p className="muted settings-hint">
-          The estimate covers what the chat list shows right now; the hidden window scrolls
-          further and may find a few more. Chats that fail (timeout, sign-in wall, deleted)
-          are listed in the report at the end and can be added later just by opening them.
+          The count includes conversations already waiting in the local queue — even
+          ones that are no longer visible in the chat list, such as project chats —
+          plus what the chat lists show right now. The hidden window may still find
+          a few more. Chats that fail (timeout, sign-in wall, deleted) stay in the
+          list and can be added later just by opening them.
         </p>
 
         {!preferences.historyBackfillEnabled && (

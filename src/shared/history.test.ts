@@ -2,12 +2,15 @@ import { describe, expect, it } from 'vitest';
 
 import {
   canonicalHistoryUrl,
+  chatKey,
+  cleanHistoryTitle,
   historyId,
   formatDuration,
   historyStats,
   isIndexableUrl,
   looksLikeChatUrl,
   mergeHistoryEntry,
+  mergeIndexQueue,
   normalizeText,
   type HistoryEntry
 } from './history';
@@ -91,6 +94,70 @@ describe('mergeHistoryEntry', () => {
   });
 });
 
+describe('chatKey', () => {
+  it('uses the conversation id, not the project id', () => {
+    expect(chatKey('https://chatgpt.com/g/g-p-6a3875dab9b08191bdf5915822205007/c/6a47b398-2390-83eb'))
+      .toBe('6a47b398-2390-83eb');
+    expect(chatKey('https://claude.ai/chat/aeaf7606-cf36-4658-96b8-e3ee71fcf8ff'))
+      .toBe('aeaf7606-cf36-4658-96b8-e3ee71fcf8ff');
+  });
+});
+
+describe('cleanHistoryTitle', () => {
+  it('replaces navigation labels with the fallback', () => {
+    expect(cleanHistoryTitle('Skip to main content', 'ChatGPT')).toBe('ChatGPT');
+    expect(cleanHistoryTitle('  new chat ', '')).toBe('');
+    expect(cleanHistoryTitle('', 'Claude')).toBe('Claude');
+  });
+
+  it('keeps real conversation titles', () => {
+    expect(cleanHistoryTitle('Перевод письма', 'ChatGPT')).toBe('Перевод письма');
+  });
+});
+
+describe('mergeIndexQueue', () => {
+  const fresh = { url: 'https://chatgpt.com/c/aaaaaaaaaaaaaaaa', title: 'Fresh chat' };
+  const project = {
+    url: 'https://chatgpt.com/g/g-p-6a3875dab9b08191bdf5915822205007/c/6a47b398-2390-83eb',
+    title: 'Project chat'
+  };
+
+  it('adds conversations that are no longer in the sidebar', () => {
+    expect(mergeIndexQueue([fresh], [project], 10).map((item) => item.title))
+      .toEqual(['Fresh chat', 'Project chat']);
+  });
+
+  it('deduplicates canonical variants and drops non-chat urls', () => {
+    const result = mergeIndexQueue(
+      [fresh],
+      [{ url: `${fresh.url}/#message-1`, title: 'Duplicate' }, { url: 'https://chatgpt.com/pricing', title: 'Pricing' }],
+      10
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0].title).toBe('Fresh chat');
+  });
+
+  it('collapses a short and a slugged project url for the same chat', () => {
+    const result = mergeIndexQueue(
+      [{
+        url: 'https://chatgpt.com/g/g-p-6a3875dab9b08191bdf5915822205007/c/6a47b398-2390-83eb-bcb2-628b8e1e5f06',
+        title: 'Short url'
+      }],
+      [{
+        url: 'https://chatgpt.com/g/g-p-6a3875dab9b08191bdf5915822205007-igra-everspace-2/c/6a47b398-2390-83eb-bcb2-628b8e1e5f06',
+        title: 'Slug url'
+      }],
+      10
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0].title).toBe('Short url');
+  });
+
+  it('caps the run at the limit', () => {
+    expect(mergeIndexQueue([fresh, project], [], 1)).toHaveLength(1);
+  });
+});
+
 describe('historyStats', () => {
   it('counts entries, text and services', () => {
     const stats = historyStats([
@@ -98,7 +165,7 @@ describe('historyStats', () => {
       entry({ id: 'b', text: '', titleOnly: true }),
       entry({ id: 'c', tabId: 't2', text: 'de' })
     ]);
-    expect(stats).toMatchObject({ entries: 3, withText: 2, characters: 5, services: 2 });
+    expect(stats).toMatchObject({ entries: 3, withText: 2, withoutText: 1, characters: 5, services: 2 });
   });
 });
 

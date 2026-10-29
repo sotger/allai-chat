@@ -31,6 +31,8 @@ export interface HistoryHit {
 export interface HistoryStats {
   entries: number;
   withText: number;
+  /** Conversations known from a chat list that still have no captured text. */
+  withoutText: number;
   characters: number;
   services: number;
 }
@@ -78,6 +80,10 @@ export interface HistoryReport {
   reason: 'manual' | 'auto';
   /** Every service touched by the run, in order. */
   services?: HistorySummary[];
+  /** The run ended before the queue was empty (Stop, captcha, rate limit). */
+  stopped?: boolean;
+  /** Conversations in scope that still have no text when the run ended. */
+  remaining?: number;
 }
 
 export interface HistoryEstimateService {
@@ -106,6 +112,32 @@ export interface ServerSearchHit {
 /** Collapses whitespace the same way the live page search does. */
 export function normalizeText(value: string | undefined | null): string {
   return (value ?? '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Chat lists contain navigation links whose visible text is not a chat title
+ * ("Skip to main content" is the classic one). Such a title would otherwise end
+ * up in the queue forever, because opening it does not produce a real chat.
+ */
+const NOISE_TITLES = [
+  /^skip to (main )?content$/i,
+  /^skip navigation$/i,
+  /^main content$/i,
+  /^toggle sidebar$/i,
+  /^(open|close|hide|show) sidebar$/i,
+  /^new chat$/i,
+  /^new conversation$/i,
+  /^start (a )?new chat$/i
+];
+
+export function cleanHistoryTitle(
+  title: string | undefined | null,
+  fallback = ''
+): string {
+  const normalized = normalizeText(title);
+  if (!normalized) return fallback;
+  if (NOISE_TITLES.some((pattern) => pattern.test(normalized))) return fallback;
+  return normalized;
 }
 
 /** FNV-1a: short, stable, dependency-free id suffix. */
@@ -190,6 +222,25 @@ const NON_CHAT_PATHS = [
 ];
 
 /**
+ * Identity of the conversation part of a URL. The *last* long id segment
+ * matters: a ChatGPT project URL is
+ * `/g/g-p-<project>/c/<chat>`, so taking the first id would treat every chat
+ * in the project as the same conversation.
+ */
+export function chatKey(url: string): string | undefined {
+  try {
+    const segments = new URL(url).pathname.split('/').filter(Boolean);
+    for (let index = segments.length - 1; index >= 0; index -= 1) {
+      const segment = segments[index];
+      if (/[0-9a-f]{8,}/i.test(segment) || /^\d{6,}$/.test(segment)) {
+        return segment.toLowerCase();
+      }
+    }
+  } catch { /* not a url */ }
+  return undefined;
+}
+
+/**
  * Heuristic that works across services without per-site selectors: chat URLs
  * contain a long id (uuid, hex or numeric) and are not one of the known
  * utility pages.
@@ -208,11 +259,45 @@ export function looksLikeChatUrl(raw: string): boolean {
   }
 }
 
+export interface IndexCandidate {
+  url: string;
+  title: string;
+}
+
+/**
+ * Builds the list a run will read: freshly harvested links first, then the
+ * conversations that are already in the local queue. The second half matters:
+ * older chats and ChatGPT project conversations are often no longer present in
+ * the visible sidebar, and re-harvesting the list would never reach them.
+ */
+export function mergeIndexQueue(
+  harvested: readonly IndexCandidate[],
+  queued: readonly IndexCandidate[],
+  limit: number
+): IndexCandidate[] {
+  const candidates: IndexCandidate[] = [];
+  const seen = new Set<string>();
+  const seenChats = new Set<string>();
+  for (const link of [...harvested, ...queued]) {
+    if (!looksLikeChatUrl(link.url)) continue;
+    const key = canonicalHistoryUrl(link.url);
+    if (seen.has(key)) continue;
+    // The same chat can appear under a short and a slugged project URL.
+    // `chatKey` collapses those variants so a run does not read them twice.
+    const chat = chatKey(link.url);
+    if (chat && seenChats.has(chat)) continue;
+    seen.add(key);
+    if (chat) seenChats.add(chat);
+    candidates.push({ url: link.url, title: normalizeText(link.title) });
+    if (candidates.length >= Math.max(1, limit)) break;
+  }
+  return candidates;
+}
+
 /**
  * Keeps the richest copy of a conversation. A partial render must never replace
  * a complete capture, and a title-only row is upgraded by a real capture.
- */
-export function mergeHistoryEntry(previous: HistoryEntry | undefined, next: HistoryEntry): HistoryEntry {
+ */export function mergeHistoryEntry(previous: HistoryEntry | undefined, next: HistoryEntry): HistoryEntry {
   if (!previous) return next;
 
   const previousText = normalizeText(previous.text);
@@ -258,5 +343,5 @@ export function historyStats(entries: Iterable<HistoryEntry>): HistoryStats {
     characters += entry.text.length;
     if (entry.text.trim()) withText += 1;
   }
-  return { entries: count, withText, characters, services: services.size };
+  return { entries: count, withText, withoutText: count - withText, characters, services: services.size };
 }

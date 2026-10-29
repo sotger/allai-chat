@@ -34,7 +34,7 @@ export function defaultPreferences(): Preferences {
 }
 
 export function defaultHistoryStats(): HistoryStats {
-  return { entries: 0, withText: 0, characters: 0, services: 0 };
+  return { entries: 0, withText: 0, withoutText: 0, characters: 0, services: 0 };
 }
 
 export function defaultHistoryProgress(): HistoryProgress {

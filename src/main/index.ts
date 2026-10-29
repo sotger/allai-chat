@@ -31,7 +31,7 @@ import { capturePage, harvestTitles, titleEntry, toHistoryEntry } from './histor
 import { HistoryReconciler } from './history/reconcile';
 import { isChatGptUrl, searchChatGpt } from './history/server-search';
 import { HistoryStore } from './history/store';
-import { historyId, looksLikeChatUrl } from '@shared/history';
+import { chatKey, historyId, looksLikeChatUrl } from '@shared/history';
 
 // ── Chrome fingerprint (Google blocks embedded browsers without this) ──
 const chromeVersion = process.versions.chrome || '138.0.0.0';
@@ -146,9 +146,12 @@ async function harvestTab(contents: WebContents, force = false): Promise<number>
   lastHarvestAt.set(tab.id, Date.now());
 
   const links = await harvestTitles(contents);
+  const indexed = historyStore.indexedChatKeys(tab.id);
   let added = 0;
   for (const link of links) {
     if (!looksLikeChatUrl(link.url)) continue;
+    const key = chatKey(link.url);
+    if (key && indexed.has(key)) continue;
     const id = historyId(tab.id, link.url);
     if (historyStore.get(id)) continue;
     const entry = titleEntry(tab, link.url, link.title);
@@ -1181,20 +1184,35 @@ function wireIpc(): void {
   });
 
   ipcMain.handle(IPC_CHANNELS.estimateHistoryIndex, async (_event, tabId?: string) => {
+    await historyStore.load();
     const targets = tabId
       ? state.tabs.filter(item => item.id === tabId)
       : state.tabs.filter(item => contentsForTab(item));
 
     const services = await Promise.all(targets.map(async (tab) => {
+      // The estimate must include the local queue, not only what the visible
+      // sidebar shows: older chats and project conversations are not in it.
+      const indexed = historyStore.indexedChatKeys(tab.id);
+      const ids = new Set(
+        historyStore.unindexed(tab.id)
+          .filter((entry) => {
+            const key = chatKey(entry.url);
+            return !key || !indexed.has(key);
+          })
+          .map((entry) => entry.id)
+      );
       const contents = contentsForTab(tab);
-      if (!contents) return { tabId: tab.id, service: tab.label, candidates: 0 };
-      const links = await harvestTitles(contents);
-      const missing = links.filter((link) => {
-        if (!looksLikeChatUrl(link.url)) return false;
-        const entry = historyStore.get(historyId(tab.id, link.url));
-        return !entry || entry.titleOnly;
-      });
-      return { tabId: tab.id, service: tab.label, candidates: missing.length };
+      if (contents) {
+        const links = await harvestTitles(contents);
+        for (const link of links) {
+          if (!looksLikeChatUrl(link.url)) continue;
+          const key = chatKey(link.url);
+          if (key && indexed.has(key)) continue;
+          const existing = historyStore.get(historyId(tab.id, link.url));
+          if (!existing || existing.titleOnly) ids.add(historyId(tab.id, link.url));
+        }
+      }
+      return { tabId: tab.id, service: tab.label, candidates: ids.size };
     }));
 
     const candidates = services.reduce((sum, item) => sum + item.candidates, 0);

@@ -228,15 +228,23 @@ and nothing is uploaded. **Settings → History search** has two switches:
   signal.
 
 **Index now** covers **every loaded service**, starting with the active tab and
-then continuing in sidebar order. It first shows how many conversations it found
-per service and a rough total estimate (page load + settle + the pause between
-chats); **Only <service>** limits the run to the current tab. While it runs, a
-bar at the bottom of the window shows the service and its position in the batch
-(`Indexing Claude 3/7`), the current conversation, the processed/total count and
-**Stop**, which stops the whole batch. When it ends, one report shows the saved,
-queued and failed totals, groups the failures by service, and links each one:
-opening a failed chat once is enough to add it to the index. Progress is not
-resumed automatically after a restart — press **Index now** again.
+then continuing in sidebar order. It works from the local queue, not only from
+what the sidebar shows right now: a conversation whose title was harvested
+earlier is re-read even after it has scrolled out of the visible chat list, and
+ChatGPT project chats are reached the same way. The confirmation shows how many
+conversations are queued per service and a rough total estimate (page load +
+settle + the pause between chats); **Only <service>** limits the run to the
+current tab. While it runs, a bar at the bottom of the window shows the service
+and its position in the batch (`Indexing Claude 3/7`), the current conversation,
+the processed/total count and **Stop**, which stops the whole batch. A manual
+run ends with one report: saved, attempted, not read and how many conversations
+are still left in the queue, with failures grouped by service and linked.
+Automatic top-ups never open that report. Progress is not resumed automatically
+after a restart — press **Index now** again.
+
+Queued rows that point at the same conversation under two URL variants (for
+example a short and a slugged ChatGPT project address) are collapsed, and a row
+whose chat already has text is dropped, so a run does not re-read the same chat.
 
 Services are read one after another, each in its own hidden window, with an
 extra 15–30 second pause between them, so the switch from one site to the next

@@ -10,6 +10,7 @@ export function IndexReportDialog() {
 
   const close = (): void => setHistoryReport(null);
   const duration = formatDuration(report.finishedAt - report.startedAt);
+  const remaining = report.remaining ?? 0;
 
   const openFailure = async (url: string, tabId: string): Promise<void> => {
     close();
@@ -21,7 +22,7 @@ export function IndexReportDialog() {
     <div className="modal-backdrop" onMouseDown={close}>
       <div className="modal index-report-modal" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header">
-          <h2>Indexing finished</h2>
+          <h2>{report.stopped ? 'Indexing stopped' : 'Indexing finished'}</h2>
           <button className="icon-button" onClick={close} title="Close">{'\u00D7'}</button>
         </div>
 
@@ -32,11 +33,15 @@ export function IndexReportDialog() {
           </div>
           <div className="index-report-stat">
             <span className="index-report-value">{report.total.toLocaleString()}</span>
-            <span className="index-report-label">queued</span>
+            <span className="index-report-label">attempted</span>
           </div>
           <div className="index-report-stat">
             <span className="index-report-value">{report.failures.length.toLocaleString()}</span>
             <span className="index-report-label">not read</span>
+          </div>
+          <div className="index-report-stat">
+            <span className="index-report-value">{remaining.toLocaleString()}</span>
+            <span className="index-report-label">left in queue</span>
           </div>
           <div className="index-report-stat">
             <span className="index-report-value">{duration}</span>
@@ -54,8 +59,7 @@ export function IndexReportDialog() {
           <>
             <h3 className="index-report-heading">Could not read</h3>
             <p className="muted settings-hint">
-              Open any of them in the app once and it will be added to the index
-              automatically.
+              They stay in the queue: open one or run indexing again to retry it.
             </p>
             <div className="index-report-list">
               {(report.services ?? [{ tabId: report.tabId, service: report.service, total: report.total, saved: report.saved, failures: report.failures }])
@@ -82,9 +86,21 @@ export function IndexReportDialog() {
           </>
         )}
 
-        {report.failures.length === 0 && (
-          <p className="index-report-ok">Every conversation in the queue was saved.</p>
-        )}
+        {report.stopped ? (
+          <p className="muted">
+            Stopped before the queue was empty.
+            {remaining > 0
+              ? ` ${remaining.toLocaleString()} conversation${remaining === 1 ? '' : 's'} still waiting.`
+              : ''}
+          </p>
+        ) : remaining > 0 ? (
+          <p className="muted">
+            {remaining.toLocaleString()} conversation{remaining === 1 ? '' : 's'} still
+            in the queue. Run indexing again, or open one of them to add it.
+          </p>
+        ) : report.failures.length === 0 ? (
+          <p className="index-report-ok">Every conversation in the queue is indexed.</p>
+        ) : null}
 
         <div className="modal-actions">
           <button className="secondary-button" onClick={() => {
