@@ -256,10 +256,37 @@ export function isIndexableUrl(raw: string): boolean {
 }
 
 const NON_CHAT_PATHS = [
-  '/settings', '/pricing', '/login', '/logout', '/auth', '/signin', '/signup',
-  '/register', '/help', '/about', '/terms', '/privacy', '/download', '/downloads',
-  '/new', '/explore', '/discover', '/apps', '/plugins', '/projects', '/projects/new'
+  '/settings', '/pricing', '/login', '/logout', '/auth', '/signin', '/sign_in',
+  '/sign-in', '/signup', '/register', '/help', '/about', '/terms', '/privacy',
+  '/download', '/downloads', '/new', '/explore', '/discover', '/apps',
+  '/plugins', '/projects', '/projects/new', '/chats', '/library', '/subscribe',
+  '/history', '/recents', '/upgrade', '/account', '/billing'
 ];
+
+/**
+ * A known utility page ("/chats", "/library", "/subscribe", …) that must never
+ * become a history row. Real conversations have an id segment in the path and
+ * are not matched here.
+ */
+export function isUtilityUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    const path = url.pathname.toLowerCase();
+    if (NON_CHAT_PATHS.some((known) => path === known || path.startsWith(`${known}/`))) return true;
+    // Some services keep their account screens in the hash (`grok.com/#subscribe`).
+    const hash = url.hash.toLowerCase();
+    return /^#(subscribe|pricing|upgrade|settings|login|signin|signup|account|billing)/.test(hash);
+  } catch {
+    return false;
+  }
+}
+
+const ACCESS_WALL_PATTERN = /you need access|request access|private conversation link|sign in to (continue|view)|log in to (continue|view)|access denied|^skip to main content\s+command menu/i;
+
+/** A private/expired link or a sign-in wall is not a readable conversation. */
+export function isAccessWallText(text: string | undefined | null): boolean {
+  return ACCESS_WALL_PATTERN.test((text ?? '').slice(0, 1200));
+}
 
 /**
  * Identity of the conversation part of a URL. The *last* long id segment

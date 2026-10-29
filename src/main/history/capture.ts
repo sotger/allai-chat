@@ -4,7 +4,9 @@ import {
   canonicalHistoryUrl,
   cleanHistoryTitle,
   historyId,
+  isAccessWallText,
   isIndexableUrl,
+  isUtilityUrl,
   normalizeText,
   type HistoryEntry
 } from '@shared/history';
@@ -15,20 +17,23 @@ const MAX_CAPTURE_CHARS = 120_000;
 /** Reads the rendered text of the page. Shadow roots are appended separately. */
 export const captureScript = `(() => {
   const norm = (value) => (value || '').replace(/\\s+/g, ' ').trim();
-  const noise = 'nav, aside, header, footer, [role="navigation"], [role="complementary"], [role="banner"], [role="contentinfo"], [class*="sidebar" i], [class*="side-bar" i]';
+  // Read <main>, not the whole body with a broad [class*=sidebar] filter:
+  // Grok's root wrapper is "group/sidebar-wrapper" and hid the conversation.
+  const noise = 'nav, aside, header, footer, [role="navigation"], [role="complementary"], [role="banner"], [role="contentinfo"], [data-sidebar]';
+  const root = document.querySelector('main, [role="main"]');
+  const target = root || document.body;
 
-  // The sidebar holds the chat list, not the conversation. Hide it for the
-  // duration of one synchronous read: innerText keeps block boundaries (unlike
-  // textContent on a clone) and the paint happens after the style is removed,
-  // so nothing flickers.
+  // Hide navigation for the duration of one synchronous read. innerText keeps
+  // block boundaries (unlike textContent on a clone) and the paint happens
+  // after the style is removed, so nothing flickers.
   const style = document.createElement('style');
   style.textContent = noise + ' { display: none !important; }';
   (document.head || document.documentElement).appendChild(style);
-  let text = document.body ? document.body.innerText : '';
+  let text = target ? target.innerText : '';
   style.remove();
   if (!text.trim() && document.body) text = document.body.innerText;
 
-  for (const host of document.querySelectorAll('*')) {
+  for (const host of (target || document).querySelectorAll('*')) {
     if (!host.shadowRoot) continue;
     const shadow = host.shadowRoot.textContent;
     if (shadow) text += ' ' + shadow;
@@ -169,14 +174,25 @@ export function harvestScript(options: { scroll?: boolean } = {}): string {
 })()`;
 }
 
-const listLinkScript = `(() => {
+const listLinkScript = `(async () => {
   const norm = (value) => (value || '').replace(/\\s+/g, ' ').trim();
-  const link = [...document.querySelectorAll('a[href]')].find((anchor) => {
-    const text = norm(anchor.getAttribute('aria-label') || anchor.innerText || '');
-    if (!/^(view|see|show) all$/i.test(text)) return false;
-    try { return new URL(anchor.href, location.href).origin === location.origin; } catch { return false; }
+  const element = [...document.querySelectorAll('a[href], button, [role="button"]')].find((candidate) => {
+    const text = norm(candidate.getAttribute('aria-label') || candidate.innerText || '');
+    return /^(view|see|show) all$/i.test(text);
   });
-  return link ? link.href : '';
+  if (!element) return '';
+  if (element.tagName === 'A') {
+    try {
+      const url = new URL(element.href, location.href);
+      return url.origin === location.origin ? url.href : '';
+    } catch { return ''; }
+  }
+  // Claude's "View all" is a button that navigates to /chats. Grok's "See all"
+  // opens a command menu without changing the URL; that returns nothing.
+  const before = location.href;
+  element.click();
+  await new Promise((resolve) => setTimeout(resolve, 900));
+  return location.href !== before ? location.href : '';
 })()`;
 
 /** The "View all" link that leads from a chat page to the full history list. */
@@ -199,7 +215,7 @@ export interface CapturedPage {
   text: string;
 }
 
-export async function capturePage(contents: WebContents, timeoutMs = 4000): Promise<CapturedPage | undefined> {
+export async function capturePage(contents: WebContents, timeoutMs = 10_000): Promise<CapturedPage | undefined> {
   if (contents.isDestroyed()) return undefined;
   const result = await withTimeout(
     contents.executeJavaScript(captureScript) as Promise<CapturedPage>,
@@ -215,6 +231,9 @@ export async function capturePage(contents: WebContents, timeoutMs = 4000): Prom
 
 export function toHistoryEntry(tab: ServiceTab, page: CapturedPage, now = Date.now()): HistoryEntry | undefined {
   if (!isIndexableUrl(page.url)) return undefined;
+  // "/chats", "/library", "/subscribe" and sign-in walls are pages, not
+  // conversations: they must not show up as indexed rows or in the queue.
+  if (isUtilityUrl(page.url) || isAccessWallText(page.text)) return undefined;
   const text = page.text.slice(0, MAX_CAPTURE_CHARS);
   if (text.length < 40) return undefined;
   return {

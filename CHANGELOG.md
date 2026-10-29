@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.7.2 — 2026-10-30
+
+### Fixed
+
+- **Utility pages are no longer captured as conversations.** `/chats`,
+  `/library`, `/projects`, `#subscribe`, sign-in screens and private-link/access
+  walls are rejected by the capture path, and rows already stored from older
+  builds are dropped when the index loads. On the author's profile this removed
+  five junk rows (Claude `/chats` and `/projects`, Grok `/subscribe` and a
+  private link, Perplexity `/library`).
+- **“View all” buttons are followed, not only links.** Claude renders its
+  “View all” control as a button that navigates to `/chats`; the hidden
+  harvester now clicks it and reads the full list. Grok's “See all” opens a
+  command menu without changing the URL, so it is left alone.
+- **Capture reads `<main>`, not the whole page.** Grok's root wrapper has
+  `group/sidebar-wrapper` in its class, and the old `[class*=sidebar]` filter
+  hid the entire conversation. Reading the main element (with a 10 s timeout)
+  captured the Grok chat as 6,629 characters instead of 92.
+- Perplexity's `/library` row is also removed from existing indexes; the 586
+  queued conversations are unaffected.
+
+### Notes
+
+- Grok's account currently exposes **one** accessible conversation in
+  “See all” (plus an inaccessible private link), and Claude's `/chats` lists
+  **30** unique chats — all 30 are already indexed. The large hidden backlog was
+  specific to Perplexity (588 chats).
+
 ## 1.7.1 — 2026-10-30
 
 ### Fixed

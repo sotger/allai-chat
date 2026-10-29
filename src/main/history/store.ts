@@ -6,6 +6,8 @@ import {
   chatKey,
   cleanHistoryTitle,
   historyStats,
+  isAccessWallText,
+  isUtilityUrl,
   mergeHistoryEntry,
   normalizeText,
   type HistoryEntry,
@@ -70,6 +72,7 @@ export class HistoryStore {
 
       const byId = new Map<string, HistoryEntry>();
       let lines = 0;
+      let dropped = 0;
       for (const line of raw.split('\n')) {
         if (!line.trim()) continue;
         lines += 1;
@@ -80,6 +83,12 @@ export class HistoryStore {
             continue;
           }
           if (!parsed?.id || !parsed.url) continue;
+          // Older builds captured "/chats", "/library", "/subscribe" and
+          // private-link walls as conversations. Drop them on load.
+          if (isUtilityUrl(parsed.url) || isAccessWallText(parsed.text)) {
+            dropped += 1;
+            continue;
+          }
           byId.set(parsed.id, mergeHistoryEntry(byId.get(parsed.id), {
             ...parsed,
             text: normalizeText(parsed.text),
@@ -97,7 +106,7 @@ export class HistoryStore {
       this.loaded = true;
 
       // Rewrite when the log has accumulated many updates for the same chats.
-      if (pruned > 0 || (lines > 1000 && lines > byId.size * COMPACT_RATIO)) {
+      if (pruned > 0 || dropped > 0 || (lines > 1000 && lines > byId.size * COMPACT_RATIO)) {
         await this.compact([...byId.values()]);
       }
     })();

@@ -7,7 +7,9 @@ import {
   historyId,
   formatDuration,
   historyStats,
+  isAccessWallText,
   isIndexableUrl,
+  isUtilityUrl,
   looksLikeChatUrl,
   mergeHistoryEntry,
   mergeIndexQueue,
@@ -71,6 +73,31 @@ describe('url filters', () => {
     expect(isIndexableUrl('https://accounts.google.com/o/oauth2/v2/auth')).toBe(false);
     expect(isIndexableUrl('https://chatgpt.com/c/abc')).toBe(true);
     expect(isIndexableUrl('file:///tmp/secret')).toBe(false);
+  });
+});
+
+describe('isUtilityUrl', () => {
+  it('rejects list, library and account pages', () => {
+    expect(isUtilityUrl('https://claude.ai/chats')).toBe(true);
+    expect(isUtilityUrl('https://claude.ai/projects')).toBe(true);
+    expect(isUtilityUrl('https://www.perplexity.ai/library')).toBe(true);
+    expect(isUtilityUrl('https://grok.com/#subscribe')).toBe(true);
+    expect(isUtilityUrl('https://chat.deepseek.com/sign_in')).toBe(true);
+  });
+
+  it('accepts real conversation urls', () => {
+    expect(isUtilityUrl('https://claude.ai/chat/5bd21e7b-8052-4234-a3e7-e81f89310239')).toBe(false);
+    expect(isUtilityUrl('https://www.perplexity.ai/search/419abc20-b5ad-484d-9656-510283e08383')).toBe(false);
+    expect(isUtilityUrl('https://grok.com/c/c2f2629d-fe8d-4218-8a72-aad5f09736c8')).toBe(false);
+  });
+});
+
+describe('isAccessWallText', () => {
+  it('detects private-link walls', () => {
+    expect(isAccessWallText('You need access. This is a private conversation link.')).toBe(true);
+    expect(isAccessWallText('Please sign in to continue to read this chat')).toBe(true);
+    expect(isAccessWallText('Skip to main content\nCommand Menu\nChats')).toBe(true);
+    expect(isAccessWallText('A normal conversation about TypeScript generics')).toBe(false);
   });
 });
 

@@ -193,6 +193,34 @@ describe('HistoryStore', () => {
     expect(changes).toBe(3);
   });
 
+  it('drops utility pages and access walls on load', async () => {
+    const dir = tempDir();
+    const first = new HistoryStore(dir);
+    await first.load();
+    first.upsert(entry('chats', 'a long list of chats', {
+      url: 'https://claude.ai/chats',
+      title: 'Claude'
+    }));
+    first.upsert(entry('subscribe', 'One subscription. Access to everything.', {
+      url: 'https://grok.com/#subscribe',
+      title: 'Grok'
+    }));
+    first.upsert(entry('wall', 'You need access. This is a private conversation link.', {
+      url: 'https://grok.com/c/ff3a2219-58df-4601-9bda-b22eee0c7586'
+    }));
+    first.upsert(entry('real', `real conversation ${'x'.repeat(60)}`, {
+      url: 'https://claude.ai/chat/5bd21e7b-8052-4234-a3e7-e81f89310239'
+    }));
+    first.flushSync();
+
+    const second = new HistoryStore(dir);
+    await second.load();
+
+    expect(second.stats().entries).toBe(1);
+    expect(second.get('real')).toBeDefined();
+    expect(lines(dir)).toHaveLength(1);
+  });
+
   it('replaces a navigation label with the service name on load', async () => {
     const dir = tempDir();
     const first = new HistoryStore(dir);
