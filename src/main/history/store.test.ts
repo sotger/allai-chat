@@ -177,6 +177,22 @@ describe('HistoryStore', () => {
     expect(queued[0].title).toBe('Queued conversation');
   });
 
+  it('notifies the panel when a row changes', async () => {
+    const dir = tempDir();
+    const store = new HistoryStore(dir);
+    await store.load();
+
+    let changes = 0;
+    store.setOnChange(() => { changes += 1; });
+
+    store.upsert(entry('a', ''));
+    store.upsert(entry('a', ''));
+    store.upsert(entry('a', 'text'));
+    store.removeById('a');
+
+    expect(changes).toBe(3);
+  });
+
   it('replaces a navigation label with the service name on load', async () => {
     const dir = tempDir();
     const first = new HistoryStore(dir);

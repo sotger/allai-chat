@@ -2,6 +2,7 @@ import type {
   HistoryEstimate,
   HistoryHit,
   HistoryProgress,
+  HistoryQueueSnapshot,
   HistoryReport,
   HistoryStats,
   ServerSearchHit
@@ -40,6 +41,12 @@ export interface AddTabInput {
   label?: string;
 }
 
+export interface StartHistoryIndexInput {
+  tabId?: string;
+  /** Manual runs are full by default; `quick` keeps the old per-service cap. */
+  mode?: 'full' | 'quick';
+}
+
 export type MenuAction =
   | 'add-tab'
   | 'close-tab'
@@ -50,6 +57,7 @@ export type MenuAction =
   | 'broadcast'
   | 'downloads'
   | 'settings'
+  | 'queue'
   | 'next-tab'
   | 'prev-tab'
   | 'zoom-in'
@@ -105,12 +113,14 @@ export interface AllaiApi {
   searchHistory: (query: string) => Promise<HistoryHit[]>;
   searchServerHistory: (query: string) => Promise<ServerSearchHit[]>;
   getHistoryStats: () => Promise<HistoryStats>;
+  getHistoryQueue: () => Promise<HistoryQueueSnapshot>;
   getHistoryProgress: () => Promise<HistoryProgress>;
   estimateHistoryIndex: (tabId?: string) => Promise<HistoryEstimate>;
   harvestHistory: (tabId?: string) => Promise<number>;
-  startHistoryIndex: (tabId?: string) => Promise<HistoryProgress>;
+  startHistoryIndex: (input?: StartHistoryIndexInput) => Promise<HistoryProgress>;
   stopHistoryIndex: () => Promise<void>;
   openHistoryEntry: (tabId: string, url: string) => Promise<void>;
+  forgetHistoryEntry: (id: string) => Promise<void>;
   clearHistory: () => Promise<void>;
   onStateChanged: (listener: (state: AppState) => void) => () => void;
   onMenuAction: (listener: (action: MenuAction) => void) => () => void;
@@ -119,6 +129,7 @@ export interface AllaiApi {
   onGoogleSignInDone: (listener: (result: GoogleSignInResult) => void) => () => void;
   onHistoryProgress: (listener: (progress: HistoryProgress) => void) => () => void;
   onHistoryReport: (listener: (report: HistoryReport) => void) => () => void;
+  onHistoryUpdated: (listener: () => void) => () => void;
 }
 
 export const IPC_CHANNELS = {
@@ -150,12 +161,14 @@ export const IPC_CHANNELS = {
   searchHistory: 'allai:search-history',
   searchServerHistory: 'allai:search-server-history',
   getHistoryStats: 'allai:get-history-stats',
+  getHistoryQueue: 'allai:get-history-queue',
   getHistoryProgress: 'allai:get-history-progress',
   estimateHistoryIndex: 'allai:estimate-history-index',
   harvestHistory: 'allai:harvest-history',
   startHistoryIndex: 'allai:start-history-index',
   stopHistoryIndex: 'allai:stop-history-index',
   openHistoryEntry: 'allai:open-history-entry',
+  forgetHistoryEntry: 'allai:forget-history-entry',
   clearHistory: 'allai:clear-history',
   stateChanged: 'allai:event:state-changed',
   menuAction: 'allai:event:menu-action',
@@ -163,5 +176,6 @@ export const IPC_CHANNELS = {
   downloadsChanged: 'allai:event:downloads-changed',
   googleSignInDone: 'allai:event:google-sign-in-done',
   historyProgress: 'allai:event:history-progress',
-  historyReport: 'allai:event:history-report'
+  historyReport: 'allai:event:history-report',
+  historyUpdated: 'allai:event:history-updated'
 } as const;

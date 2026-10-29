@@ -20,12 +20,9 @@ import type { HistoryStore } from './store';
 
 // Env overrides exist for local testing and screenshots only; the defaults are
 // what ships. A manual run still respects the same human pacing either way.
-function envNumber(name: string, fallback: number): number {
-  const raw = Number(process.env[name]);
-  return Number.isFinite(raw) && raw >= 0 ? raw : fallback;
-}
-
-const MAX_PER_RUN = Math.max(1, envNumber('ALLAI_INDEX_MAX', 60));
+const DEFAULT_PASS = 60;
+/** A manual run is meant to reach an empty queue; this is only a runaway guard. */
+const FULL_PER_SERVICE = 2000;
 const LOAD_TIMEOUT_MS = 25_000;
 const MAX_CONSECUTIVE_FAILURES = 3;
 const BLOCK_PATTERN = /captcha|unusual traffic|verify (that )?you are (a )?human|are you a robot|подтвердите,? что вы не робот|доступ ограничен/i;
@@ -50,6 +47,18 @@ export interface BackfillRunOptions {
   reason?: 'manual' | 'auto';
   /** Cap for this run; the periodic reconciler uses a small batch. */
   limit?: number;
+  /** Manual runs go until the queue is empty (with a runaway guard). */
+  full?: boolean;
+}
+
+function resolveLimit(options: BackfillRunOptions): number {
+  if (options.limit !== undefined) return Math.max(1, options.limit);
+  const raw = process.env.ALLAI_INDEX_MAX;
+  if (raw !== undefined && raw !== '') {
+    const override = Number(raw);
+    if (Number.isFinite(override)) return Math.max(1, override);
+  }
+  return options.full ? FULL_PER_SERVICE : DEFAULT_PASS;
 }
 
 function humanDelay(): Promise<void> {
@@ -75,6 +84,12 @@ export class HistoryBackfill {
   private running = false;
   private stopRequested = false;
   private progress: HistoryProgress = { running: false, done: 0, total: 0 };
+  private scopeTabIds: string[] = [];
+  private reason: 'manual' | 'auto' = 'manual';
+  private queueInitial = 0;
+  private runSaved = 0;
+  private runFailed = 0;
+  private startedAt = 0;
 
   constructor(private readonly options: BackfillOptions) {}
 
@@ -101,11 +116,13 @@ export class HistoryBackfill {
     if (!this.options.getContents(tab)) return this.finish({ error: 'That service is not loaded in a tab.' });
 
     const reason = runOptions.reason ?? 'manual';
-    const limit = Math.max(1, runOptions.limit ?? MAX_PER_RUN);
+    const limit = resolveLimit(runOptions);
     const startedAt = Date.now();
 
     this.running = true;
     this.stopRequested = false;
+    this.prepareRun([tab], reason);
+    this.emit({ running: true, service: tab.label, currentTitle: undefined, done: 0, total: 0 });
     try {
       const summary = await this.runTab(tab, { limit });
       this.emitReport({
@@ -120,7 +137,11 @@ export class HistoryBackfill {
         stopped: this.stopRequested,
         remaining: this.options.store.unindexed(tab.id).length
       });
-      return this.finish({ service: tab.label, done: summary.total, total: summary.total });
+      return this.finish({
+        service: tab.label,
+        done: summary.saved + summary.failures.length,
+        total: summary.total
+      });
     } finally {
       this.running = false;
     }
@@ -143,12 +164,14 @@ export class HistoryBackfill {
     if (tabs.length === 0) return this.finish({ error: 'No loaded services to index.' });
 
     const reason = runOptions.reason ?? 'manual';
-    const limit = Math.max(1, runOptions.limit ?? MAX_PER_RUN);
+    const limit = resolveLimit(runOptions);
     const startedAt = Date.now();
     const summaries: HistorySummary[] = [];
 
     this.running = true;
     this.stopRequested = false;
+    this.prepareRun(tabs, reason);
+    this.emit({ running: true, service: undefined, currentTitle: undefined, done: 0, total: 0 });
     try {
       for (let index = 0; index < tabs.length; index += 1) {
         if (this.stopRequested || !this.options.isEnabled()) break;
@@ -187,7 +210,7 @@ export class HistoryBackfill {
       stopped: this.stopRequested,
       remaining
     });
-    return this.finish({ service: label, done: total, total });
+    return this.finish({ service: label, done: saved + failures.length, total });
   }
 
   private async pauseBetweenServices(): Promise<void> {
@@ -197,6 +220,25 @@ export class HistoryBackfill {
       return;
     }
     await sleep(15_000 + Math.random() * 15_000);
+  }
+
+  private prepareRun(tabs: ServiceTab[], reason: 'manual' | 'auto'): void {
+    // Clear the previous run's counters and batch position: `emit` merges into
+    // the last progress object, so a single-service run would otherwise keep
+    // showing the old `3/7` and a stale `finishedAt`.
+    this.progress = { running: false, done: 0, total: 0 };
+    this.scopeTabIds = tabs.map((tab) => tab.id);
+    this.reason = reason;
+    this.runSaved = 0;
+    this.runFailed = 0;
+    this.startedAt = Date.now();
+    this.queueInitial = this.remainingInScope();
+  }
+
+  /** Conversations without text in every service touched by the current run. */
+  private remainingInScope(): number {
+    return this.scopeTabIds
+      .reduce((sum, tabId) => sum + this.options.store.unindexed(tabId).length, 0);
   }
 
   /** Reads one service; the caller owns the `running` flag and the report. */
@@ -266,6 +308,7 @@ export class HistoryBackfill {
         if (!ok || httpStatus === 429 || httpStatus === 403 || isAuthUrl(contents.getURL())) {
           consecutiveFailures += 1;
           done += 1;
+          this.runFailed += 1;
           const reasonText = httpStatus === 429 || httpStatus === 403
             ? 'the service rate limited the request'
             : !ok ? 'the page did not load in time' : 'the service asked to sign in again';
@@ -293,6 +336,7 @@ export class HistoryBackfill {
         if (!page?.url || isAuthUrl(page.url)) {
           consecutiveFailures += 1;
           done += 1;
+          this.runFailed += 1;
           failuresList.push({ title: link.title, url: link.url, reason: 'the service asked to sign in again' });
           await humanDelay();
           continue;
@@ -302,6 +346,7 @@ export class HistoryBackfill {
         if (chatKey(page.url) && chatKey(link.url) && chatKey(page.url) !== chatKey(link.url)) {
           consecutiveFailures += 1;
           done += 1;
+          this.runFailed += 1;
           failuresList.push({ title: link.title, url: link.url, reason: 'the conversation no longer exists at that address' });
           await humanDelay();
           continue;
@@ -309,6 +354,7 @@ export class HistoryBackfill {
 
         const text = normalizeText(page.text);
         if (BLOCK_PATTERN.test(text.slice(0, 4000))) {
+          this.runFailed += 1;
           this.emit({
             running: true,
             service: tab.label,
@@ -322,6 +368,7 @@ export class HistoryBackfill {
         if (text.length >= 40) {
           consecutiveFailures = 0;
           saved += 1;
+          this.runSaved += 1;
           const savedId = historyId(tab.id, page.url);
           this.options.store.upsert({
             id: savedId,
@@ -340,6 +387,7 @@ export class HistoryBackfill {
           if (linkId !== savedId) this.options.store.removeById(linkId);
         } else {
           consecutiveFailures += 1;
+          this.runFailed += 1;
           failuresList.push({ title: link.title, url: link.url, reason: 'no readable conversation text was rendered' });
         }
 
@@ -470,7 +518,16 @@ export class HistoryBackfill {
   }
 
   private emit(patch: Partial<HistoryProgress>): void {
-    this.progress = { ...this.progress, ...patch };
+    this.progress = {
+      ...this.progress,
+      ...patch,
+      mode: this.reason,
+      queueInitial: this.queueInitial,
+      queueRemaining: this.remainingInScope(),
+      runSaved: this.runSaved,
+      runFailed: this.runFailed,
+      startedAt: this.startedAt
+    };
     this.options.onProgress(this.progress);
   }
 

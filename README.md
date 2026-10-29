@@ -13,6 +13,10 @@ You do not need API keys, and nothing is proxied through a third-party server:
 the app simply loads the real AI websites, like a dedicated browser with
 profiles.
 
+It also keeps a private, local index of the conversations you have already
+visited, so global search finds closed chats, and a right-hand panel shows what
+is still waiting to be read.
+
 ## Screenshots
 
 ![ALLAI-CHAT main window](docs/screenshots/main.png)
@@ -24,6 +28,8 @@ profiles.
 ![Downloads panel](docs/screenshots/downloads.png)
 
 ![Searching all services](docs/screenshots/global-search.png)
+
+![Unindexed conversations panel with live indexing progress](docs/screenshots/unindexed.png)
 
 ![Sending one prompt to every service](docs/screenshots/broadcast.png)
 
@@ -64,8 +70,13 @@ profiles.
   a time, 3–8 seconds apart, and stops on a rate limit or a captcha. Off by
   default because services may treat fast automated reading as a bot. A thin bar
   at the bottom shows the service, the chat being read, the count and a **Stop**
-  button; when the run ends you get a report with the saved, queued and failed
-  conversations.
+  button; a manual run ends with one report (saved, attempted, failed and what
+  is left in the queue).
+- **Unindexed conversations panel** — `Cmd/Ctrl+Shift+U` opens a right-hand
+  panel with every conversation the app knows about but has not read yet,
+  grouped by service. Click a row to open it; once the text is captured the row
+  disappears. The same panel shows live progress while indexing (left, saved,
+  failed, current chat) and can **Refresh list** or start **Index queue**.
 - **Send a prompt to all services** — `Cmd/Ctrl+Shift+Enter` opens a small
   composer that inserts the same prompt into every open service at once. It
   inserts only by default; tick **Also press send** to submit without reviewing
@@ -246,6 +257,16 @@ Queued rows that point at the same conversation under two URL variants (for
 example a short and a slugged ChatGPT project address) are collapsed, and a row
 whose chat already has text is dropped, so a run does not re-read the same chat.
 
+**Unindexed panel.** `Cmd/Ctrl+Shift+U` (or the **▤** button in the top bar)
+opens a right-hand panel with the conversations that have a title but no text
+yet, grouped by service. The header shows how many are indexed and how many are
+waiting; during a run it shows the remaining count, saved/failed and the current
+conversation, with **Stop**. Clicking a row opens that chat in its tab and the
+row disappears once the text is captured. **Refresh list** re-reads the service
+sidebars for new titles, and **×** removes a row from the queue. A manual run
+works through the whole queue (2,000 chats per service is only a runaway guard),
+so **Stop** is the way to end it early. The width is remembered per machine.
+
 Services are read one after another, each in its own hidden window, with an
 extra 15–30 second pause between them, so the switch from one site to the next
 does not look like a burst.
@@ -286,6 +307,7 @@ are reported in the result list instead of failing silently.
 | `Cmd/Ctrl+Shift+R` | Force reload (ignore cache) |
 | `Cmd/Ctrl+F` | Find in page |
 | `Cmd/Ctrl+Shift+F` | Search all services |
+| `Cmd/Ctrl+Shift+U` | Unindexed conversations panel |
 | `Cmd/Ctrl+Shift+Enter` | Send a prompt to all services |
 | `Cmd/Ctrl+Plus` / `-` / `0` | Zoom in / out / reset |
 | `Cmd/Ctrl+J` | Downloads |

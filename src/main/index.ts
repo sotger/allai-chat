@@ -31,7 +31,12 @@ import { capturePage, harvestTitles, titleEntry, toHistoryEntry } from './histor
 import { HistoryReconciler } from './history/reconcile';
 import { isChatGptUrl, searchChatGpt } from './history/server-search';
 import { HistoryStore } from './history/store';
-import { chatKey, historyId, looksLikeChatUrl } from '@shared/history';
+import {
+  chatKey,
+  historyId,
+  looksLikeChatUrl,
+  type HistoryQueueSnapshot
+} from '@shared/history';
 
 // ── Chrome fingerprint (Google blocks embedded browsers without this) ──
 const chromeVersion = process.versions.chrome || '138.0.0.0';
@@ -82,6 +87,16 @@ const downloadManager = new DownloadManager(
 // Conversations visited in any tab are captured on navigation and indexed
 // locally, so global search also finds chats that are not open right now.
 const historyStore = new HistoryStore(app.getPath('userData'));
+
+// The queue panel listens to one throttled signal instead of every capture.
+let historyUpdatedTimer: ReturnType<typeof setTimeout> | undefined;
+historyStore.setOnChange(() => {
+  if (historyUpdatedTimer) return;
+  historyUpdatedTimer = setTimeout(() => {
+    historyUpdatedTimer = undefined;
+    sendToRenderer(IPC_CHANNELS.historyUpdated, { at: Date.now() });
+  }, 400);
+});
 
 const historyBackfill = new HistoryBackfill({
   store: historyStore,
@@ -187,6 +202,56 @@ function saveWindowBounds(win: BrowserWindow): void {
 
 // ── Tab state ────────────────────────────────────────────────────────
 const state: AppState = { tabs: [], activeTabId: null };
+
+/** How many queue rows per service are sent to the panel in one snapshot. */
+const QUEUE_ITEMS_PER_GROUP = 500;
+
+/**
+ * Groups the conversations that still have no text by service, in tab order.
+ * The panel only needs titles and links; the runner reads the same rows from
+ * the store, so this snapshot is a view, not a second queue.
+ */
+function buildQueueSnapshot(): HistoryQueueSnapshot {
+  const groups = state.tabs
+    .map((tab) => {
+      const indexed = historyStore.indexedChatKeys(tab.id);
+      const entries = historyStore.unindexed(tab.id)
+        .filter((entry) => {
+          const key = chatKey(entry.url);
+          return !key || !indexed.has(key);
+        })
+        .sort((a, b) => a.title.localeCompare(b.title));
+
+      const items = entries.slice(0, QUEUE_ITEMS_PER_GROUP).map((entry) => ({
+        id: entry.id,
+        tabId: entry.tabId,
+        service: entry.service,
+        url: entry.url,
+        title: entry.title,
+        capturedAt: entry.capturedAt
+      }));
+
+      return {
+        tabId: tab.id,
+        service: tab.label,
+        providerId: tab.providerId,
+        color: tab.color,
+        icon: tab.icon,
+        queued: entries.length,
+        items,
+        truncated: entries.length > items.length
+      };
+    })
+    .filter((group) => group.queued > 0);
+
+  const stats = historyStore.stats();
+  return {
+    groups,
+    queued: groups.reduce((sum, group) => sum + group.queued, 0),
+    entries: stats.entries,
+    withText: stats.withText
+  };
+}
 
 // The app was briefly called "allai-chat" during development; keep that data
 // when the userData folder is renamed to match the product name.
@@ -1022,6 +1087,7 @@ function rebuildMenu(): void {
         { label: 'Force Reload Service', accelerator: 'CmdOrCtrl+Shift+R', click: () => sendMenuAction('force-reload') },
         { label: 'Find in Service…', accelerator: 'CmdOrCtrl+F', click: () => sendMenuAction('find') },
         { label: 'Find in All Services…', accelerator: 'CmdOrCtrl+Shift+F', click: () => sendMenuAction('find-all') },
+        { label: 'Unindexed Conversations', accelerator: 'CmdOrCtrl+Shift+U', click: () => sendMenuAction('queue') },
         { label: 'Send Prompt to All Services…', accelerator: 'CmdOrCtrl+Shift+Enter', click: () => sendMenuAction('broadcast') },
         { type: 'separator' },
         { label: 'Downloads', accelerator: 'CmdOrCtrl+J', click: () => sendMenuAction('downloads') },
@@ -1226,6 +1292,10 @@ function wireIpc(): void {
     await historyStore.load();
     return historyStore.stats();
   });
+  ipcMain.handle(IPC_CHANNELS.getHistoryQueue, async () => {
+    await historyStore.load();
+    return buildQueueSnapshot();
+  });
   ipcMain.handle(IPC_CHANNELS.getHistoryProgress, () => historyBackfill.getProgress());
 
   ipcMain.handle(IPC_CHANNELS.harvestHistory, async (_event, tabId?: string) => {
@@ -1242,13 +1312,15 @@ function wireIpc(): void {
     return added;
   });
 
-  ipcMain.handle(IPC_CHANNELS.startHistoryIndex, (_event, tabId?: string) => {
-    // Fire and forget: a run takes minutes. Progress arrives over
+  ipcMain.handle(IPC_CHANNELS.startHistoryIndex, (_event, input?: string | { tabId?: string; mode?: 'full' | 'quick' }) => {
+    // Fire and forget: a full run can take a long time. Progress arrives over
     // `historyProgress`, so the confirmation dialog can close immediately.
-    if (tabId) void historyBackfill.start(tabId, { reason: 'manual' });
-    else void historyBackfill.startAll({ reason: 'manual' });
-    const tab = tabId
-      ? state.tabs.find(item => item.id === tabId)
+    const request = typeof input === 'string' ? { tabId: input } : input ?? {};
+    const full = request.mode !== 'quick';
+    if (request.tabId) void historyBackfill.start(request.tabId, { reason: 'manual', full });
+    else void historyBackfill.startAll({ reason: 'manual', full });
+    const tab = request.tabId
+      ? state.tabs.find(item => item.id === request.tabId)
       : state.tabs.find(item => item.id === state.activeTabId);
     return { running: true, done: 0, total: 0, service: tab?.label } as const;
   });
@@ -1261,6 +1333,10 @@ function wireIpc(): void {
     setActiveTab(tabId);
     const contents = contentsForTab(tab);
     if (contents) void contents.loadURL(url).catch(() => undefined);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.forgetHistoryEntry, (_event, id: string) => {
+    if (typeof id === 'string' && id.length > 0) historyStore.removeById(id);
   });
 
   ipcMain.handle(IPC_CHANNELS.clearHistory, async () => {

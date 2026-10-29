@@ -56,7 +56,8 @@ export function IndexConfirmDialog() {
           will read them in the background. It runs in a hidden window, one chat at a time,
           3–8 seconds apart, and moves to the next service if one shows a rate limit or a
           captcha. It starts with the service you have open and then continues through the
-          others.
+          others. A manual run works through the whole queue; <strong>Stop</strong> ends it
+          at any point.
         </p>
 
         <div className="index-confirm-estimate">

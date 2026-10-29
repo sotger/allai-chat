@@ -117,6 +117,9 @@ function TopBar() {
   const downloads = useAppStore((s) => s.downloads);
   const downloadsOpen = useAppStore((s) => s.downloadsOpen);
   const setDownloadsOpen = useAppStore((s) => s.setDownloadsOpen);
+  const queue = useAppStore((s) => s.historyQueue);
+  const queueOpen = useAppStore((s) => s.queueOpen);
+  const toggleQueue = useAppStore((s) => s.toggleQueue);
 
   const tab = tabs.find((item) => item.id === activeTabId);
   const info = activeTabId ? runtime[activeTabId] : undefined;
@@ -172,6 +175,14 @@ function TopBar() {
           onClick={() => setGlobalFindOpen(true)}
           title="Search all services (Cmd/Ctrl+Shift+F)"
         >{'\u2315'}<sup>all</sup></button>
+        <button
+          className={`icon-button queue-toggle ${queueOpen ? 'active' : ''}`}
+          onClick={toggleQueue}
+          title="Unindexed conversations (Cmd/Ctrl+Shift+U)"
+        >
+          {'\u25A4'}
+          {(queue?.queued ?? 0) > 0 && <span className="queue-count">{queue?.queued}</span>}
+        </button>
         <button
           className={`icon-button find-page ${findOpen ? 'active' : ''}`}
           onClick={() => setFindOpen(!findOpen)}

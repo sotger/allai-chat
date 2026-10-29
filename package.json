@@ -1,6 +1,6 @@
 {
   "name": "allai-chat",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "private": true,
   "description": "All your AI chats in one app: vertical tabs, isolated sessions per service",
   "author": "sotger",

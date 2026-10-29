@@ -32,10 +32,23 @@ export class HistoryStore {
   private flushTimer: ReturnType<typeof setTimeout> | undefined;
   private loaded = false;
   private loading: Promise<void> | undefined;
+  private changeListener: (() => void) | undefined;
 
   constructor(userDataPath: string) {
     this.directory = path.join(userDataPath, 'history');
     this.filePath = path.join(this.directory, 'entries.jsonl');
+  }
+
+  /**
+   * Called after a row is added, upgraded or forgotten. The main process
+   * throttles it into the `historyUpdated` IPC event for the queue panel.
+   */
+  setOnChange(listener: (() => void) | undefined): void {
+    this.changeListener = listener;
+  }
+
+  private changed(): void {
+    this.changeListener?.();
   }
 
   get isLoaded(): boolean {
@@ -166,6 +179,7 @@ export class HistoryStore {
     this.index.add(merged);
     this.queue.push(JSON.stringify(merged));
     this.scheduleFlush();
+    this.changed();
     return merged;
   }
 
@@ -238,6 +252,7 @@ export class HistoryStore {
     this.index.remove(id);
     this.queue.push(JSON.stringify({ id, deleted: true, deletedAt: Date.now() }));
     this.scheduleFlush();
+    this.changed();
   }
 
   /** Closing a service tab also drops the conversations captured for it. */
@@ -247,6 +262,7 @@ export class HistoryStore {
     this.flushSync();
     for (const entry of doomed) this.index.remove(entry.id);
     await this.compact(this.index.all());
+    this.changed();
   }
 
   async clear(): Promise<void> {
@@ -259,5 +275,6 @@ export class HistoryStore {
     try {
       await fs.promises.rm(this.filePath, { force: true });
     } catch { /* non-fatal */ }
+    this.changed();
   }
 }

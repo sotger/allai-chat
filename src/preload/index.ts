@@ -40,12 +40,14 @@ const api: AllaiApi = {
   searchHistory: (query) => ipcRenderer.invoke(IPC_CHANNELS.searchHistory, query),
   searchServerHistory: (query) => ipcRenderer.invoke(IPC_CHANNELS.searchServerHistory, query),
   getHistoryStats: () => ipcRenderer.invoke(IPC_CHANNELS.getHistoryStats),
+  getHistoryQueue: () => ipcRenderer.invoke(IPC_CHANNELS.getHistoryQueue),
   getHistoryProgress: () => ipcRenderer.invoke(IPC_CHANNELS.getHistoryProgress),
   estimateHistoryIndex: (tabId) => ipcRenderer.invoke(IPC_CHANNELS.estimateHistoryIndex, tabId),
   harvestHistory: (tabId) => ipcRenderer.invoke(IPC_CHANNELS.harvestHistory, tabId),
-  startHistoryIndex: (tabId) => ipcRenderer.invoke(IPC_CHANNELS.startHistoryIndex, tabId),
+  startHistoryIndex: (input) => ipcRenderer.invoke(IPC_CHANNELS.startHistoryIndex, input),
   stopHistoryIndex: () => ipcRenderer.invoke(IPC_CHANNELS.stopHistoryIndex),
   openHistoryEntry: (tabId, url) => ipcRenderer.invoke(IPC_CHANNELS.openHistoryEntry, tabId, url),
+  forgetHistoryEntry: (id) => ipcRenderer.invoke(IPC_CHANNELS.forgetHistoryEntry, id),
   clearHistory: () => ipcRenderer.invoke(IPC_CHANNELS.clearHistory),
   onStateChanged: (listener) => subscribe<AppState>(IPC_CHANNELS.stateChanged, listener),
   onMenuAction: (listener) => subscribe<MenuAction>(IPC_CHANNELS.menuAction, listener),
@@ -53,7 +55,8 @@ const api: AllaiApi = {
   onDownloadsChanged: (listener) => subscribe<DownloadRecord[]>(IPC_CHANNELS.downloadsChanged, listener),
   onGoogleSignInDone: (listener) => subscribe<GoogleSignInResult>(IPC_CHANNELS.googleSignInDone, listener),
   onHistoryProgress: (listener) => subscribe<HistoryProgress>(IPC_CHANNELS.historyProgress, listener),
-  onHistoryReport: (listener) => subscribe<HistoryReport>(IPC_CHANNELS.historyReport, listener)
+  onHistoryReport: (listener) => subscribe<HistoryReport>(IPC_CHANNELS.historyReport, listener),
+  onHistoryUpdated: (listener) => subscribe<unknown>(IPC_CHANNELS.historyUpdated, () => listener())
 };
 
 contextBridge.exposeInMainWorld('allai', api);

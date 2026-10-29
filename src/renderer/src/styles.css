@@ -143,6 +143,7 @@ button {
 }
 
 .app {
+  position: relative;
   display: flex;
   height: 100%;
 }
@@ -1762,4 +1763,383 @@ button {
 .text-button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* ── Unindexed conversations panel ────────────────────────────────── */
+.queue-panel {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  background: var(--bg-sidebar);
+  border-left: 1px solid var(--border);
+  user-select: none;
+  transition: width 0.14s ease, flex-basis 0.14s ease;
+}
+
+.queue-panel.resizing {
+  transition: none;
+}
+
+.queue-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  z-index: 2;
+  width: 6px;
+  cursor: col-resize;
+}
+
+.queue-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 2px;
+  background: transparent;
+}
+
+.queue-resizer:hover::after,
+.queue-panel.resizing .queue-resizer::after {
+  background: var(--accent);
+}
+
+/* Narrow windows: the panel floats over the page instead of squeezing it. */
+@media (max-width: 1200px) {
+  .queue-panel {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 41;
+    box-shadow: -10px 0 30px rgba(0, 0, 0, 0.28);
+  }
+}
+
+.queue-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 10px 8px;
+}
+
+.queue-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: calc(12.5px * var(--ui-scale));
+  font-weight: 700;
+}
+
+.queue-badge {
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-size: calc(10px * var(--ui-scale));
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.queue-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 10px 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-elevated);
+}
+
+.queue-progress-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: calc(11px * var(--ui-scale));
+  font-variant-numeric: tabular-nums;
+}
+
+.queue-progress-left {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.queue-progress-saved {
+  color: var(--text-dim);
+}
+
+.queue-progress-bar {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--border);
+}
+
+.queue-progress-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+
+.queue-progress-now {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: calc(10.5px * var(--ui-scale));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-progress-stop {
+  align-self: flex-start;
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  font-size: calc(10.5px * var(--ui-scale));
+  cursor: pointer;
+}
+
+.queue-progress-stop:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.queue-summary {
+  display: flex;
+  justify-content: space-between;
+  margin: 0 10px 8px;
+  color: var(--text-dim);
+  font-size: calc(10.5px * var(--ui-scale));
+  font-variant-numeric: tabular-nums;
+}
+
+.queue-actions {
+  display: flex;
+  gap: 6px;
+  padding: 0 10px 8px;
+}
+
+.queue-action {
+  flex: 1;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-size: calc(10.5px * var(--ui-scale));
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.queue-action:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.queue-action.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.queue-action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.queue-filter {
+  margin: 0 10px 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: calc(11px * var(--ui-scale));
+}
+
+.queue-filter::placeholder {
+  color: var(--text-dim);
+}
+
+.queue-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 6px 8px;
+}
+
+.queue-group {
+  margin-bottom: 4px;
+}
+
+.queue-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.queue-group-head:hover {
+  background: var(--bg-elevated);
+}
+
+.queue-group-label {
+  flex: 1;
+  overflow: hidden;
+  font-size: calc(11.5px * var(--ui-scale));
+  font-weight: 600;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-group-count {
+  color: var(--text-dim);
+  font-size: calc(10px * var(--ui-scale));
+  font-variant-numeric: tabular-nums;
+}
+
+.queue-chevron {
+  color: var(--text-dim);
+  font-size: 9px;
+  transition: transform 0.12s ease;
+}
+
+.queue-chevron.collapsed {
+  transform: rotate(-90deg);
+}
+
+.queue-group-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.queue-row {
+  display: flex;
+  align-items: center;
+  border-radius: 6px;
+}
+
+.queue-row:hover {
+  background: var(--bg-elevated);
+}
+
+.queue-row.reading {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.queue-row-main {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 5px 4px 5px 14px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: calc(11px * var(--ui-scale));
+  text-align: left;
+  cursor: pointer;
+}
+
+.queue-row-main:disabled {
+  cursor: default;
+}
+
+.queue-row-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-row-dot {
+  flex: 0 0 auto;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--border);
+}
+
+.queue-row-spinner {
+  width: 10px;
+  height: 10px;
+}
+
+.queue-row-forget {
+  padding: 2px 7px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.queue-row:hover .queue-row-forget {
+  opacity: 1;
+}
+
+.queue-row-forget:hover {
+  color: var(--danger);
+}
+
+.queue-more {
+  padding: 4px 14px 6px;
+  color: var(--text-dim);
+  font-size: calc(10px * var(--ui-scale));
+}
+
+.queue-empty-state {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 18px 12px;
+  color: var(--text-muted);
+  font-size: calc(11px * var(--ui-scale));
+  line-height: 1.35;
+}
+
+.queue-foot {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: calc(10px * var(--ui-scale));
+  font-variant-numeric: tabular-nums;
+}
+
+.queue-toggle {
+  position: relative;
+}
+
+.queue-count {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 14px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 13px;
+  text-align: center;
 }

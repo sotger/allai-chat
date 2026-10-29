@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.7.0 — 2026-10-30
+
+### Added
+
+- **Unindexed conversations panel.** `Cmd/Ctrl+Shift+U`, **View → Unindexed
+  Conversations** or the **▤** button opens a right-hand panel listing every
+  conversation that has a title but no captured text, grouped by service. It is
+  resizable (240–460 px, remembered per machine) and turns into an overlay on
+  narrow windows.
+- Each row opens the chat in its tab; the row disappears as soon as the text is
+  captured. A filter narrows long lists, **×** removes a row from the queue, and
+  **Refresh list** re-reads the service sidebars for new titles.
+- **Live progress in the panel** while indexing: conversations left, saved and
+  failed, the current service and chat, a progress bar and **Stop**. The top-bar
+  button carries the queue count.
+- **Full manual runs.** A manual run now works through the whole local queue
+  instead of the first 60 per service. 2,000 chats per service remains only as a
+  runaway guard; **Stop** ends the run at any point.
+
+### Changed
+
+- The confirmation dialog says when the queue will be read to the end and that
+  the estimate includes rows that are no longer visible in the chat list.
+- Automatic top-ups remain small passes and never open the report.
+- The report shows **left in queue**, **attempted** instead of “queued”, and a
+  stopped run is labelled as such.
+
 ## 1.6.0 — 2026-10-28
 
 ### Added

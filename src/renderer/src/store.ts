@@ -1,5 +1,10 @@
 import type { AddTabInput, DownloadRecord } from '@shared/ipc';
-import type { HistoryProgress, HistoryReport, HistoryStats } from '@shared/history';
+import type {
+  HistoryProgress,
+  HistoryQueueSnapshot,
+  HistoryReport,
+  HistoryStats
+} from '@shared/history';
 import type { AppState, Preferences, ServiceTab } from '@shared/types';
 import { create } from 'zustand';
 
@@ -41,6 +46,14 @@ export function defaultHistoryProgress(): HistoryProgress {
   return { running: false, done: 0, total: 0 };
 }
 
+function initialQueueOpen(): boolean {
+  try {
+    return localStorage.getItem('allai.queue-open') !== '0';
+  } catch {
+    return true;
+  }
+}
+
 interface AppStore {
   tabs: ServiceTab[];
   activeTabId: string | null;
@@ -60,6 +73,8 @@ interface AppStore {
   preferences: Preferences;
   historyStats: HistoryStats;
   historyProgress: HistoryProgress;
+  historyQueue: HistoryQueueSnapshot | null;
+  queueOpen: boolean;
   indexConfirmOpen: boolean;
   historyReport: HistoryReport | null;
 
@@ -84,11 +99,16 @@ interface AppStore {
   setPreferences: (preferences: Preferences) => void;
   setHistoryStats: (stats: HistoryStats) => void;
   setHistoryProgress: (progress: HistoryProgress) => void;
+  setHistoryQueue: (queue: HistoryQueueSnapshot | null) => void;
+  setQueueOpen: (open: boolean) => void;
+  toggleQueue: () => void;
   setIndexConfirmOpen: (open: boolean) => void;
   setHistoryReport: (report: HistoryReport | null) => void;
   refreshHistoryStats: () => Promise<void>;
+  refreshHistoryQueue: () => Promise<void>;
   startHistoryIndex: (tabId?: string) => Promise<void>;
   stopHistoryIndex: () => Promise<void>;
+  forgetHistoryEntry: (id: string) => Promise<void>;
   clearHistory: () => Promise<void>;
   updatePreferences: (patch: Partial<Preferences>) => Promise<void>;
   chooseDownloadDirectory: () => Promise<void>;
@@ -128,19 +148,22 @@ export const useAppStore = create<AppStore>((set, get) => ({
   preferences: defaultPreferences(),
   historyStats: defaultHistoryStats(),
   historyProgress: defaultHistoryProgress(),
+  historyQueue: null,
+  queueOpen: initialQueueOpen(),
   indexConfirmOpen: false,
   historyReport: null,
 
   bootstrap: async () => {
-    const [state, preferences, downloads, historyStats, historyProgress] = await Promise.all([
+    const [state, preferences, downloads, historyStats, historyProgress, historyQueue] = await Promise.all([
       window.allai.getState(),
       window.allai.getPreferences(),
       window.allai.getDownloads(),
       window.allai.getHistoryStats(),
-      window.allai.getHistoryProgress()
+      window.allai.getHistoryProgress(),
+      window.allai.getHistoryQueue()
     ]);
     get().applyState(state);
-    set({ preferences, downloads, historyStats, historyProgress, isReady: true });
+    set({ preferences, downloads, historyStats, historyProgress, historyQueue, isReady: true });
   },
 
   applyState: (state) => {
@@ -221,6 +244,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setPreferences: (preferences) => set({ preferences }),
   setHistoryStats: (historyStats) => set({ historyStats }),
   setHistoryProgress: (historyProgress) => set({ historyProgress }),
+  setHistoryQueue: (historyQueue) => set({ historyQueue }),
+  setQueueOpen: (open) => {
+    try { localStorage.setItem('allai.queue-open', open ? '1' : '0'); } catch { /* ignore */ }
+    set({ queueOpen: open });
+  },
+  toggleQueue: () => get().setQueueOpen(!get().queueOpen),
   setIndexConfirmOpen: (indexConfirmOpen) => set({ indexConfirmOpen }),
   setHistoryReport: (historyReport) => set({ historyReport }),
 
@@ -229,20 +258,34 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ historyStats });
   },
 
+  refreshHistoryQueue: async () => {
+    const historyQueue = await window.allai.getHistoryQueue();
+    set({ historyQueue });
+  },
+
   startHistoryIndex: async (tabId) => {
-    const historyProgress = await window.allai.startHistoryIndex(tabId);
+    const historyProgress = await window.allai.startHistoryIndex({ tabId, mode: 'full' });
     set({ historyProgress });
-    const historyStats = await window.allai.getHistoryStats();
-    set({ historyStats });
+    const [historyStats, historyQueue] = await Promise.all([
+      window.allai.getHistoryStats(),
+      window.allai.getHistoryQueue()
+    ]);
+    set({ historyStats, historyQueue });
   },
 
   stopHistoryIndex: async () => {
     await window.allai.stopHistoryIndex();
   },
 
+  forgetHistoryEntry: async (id) => {
+    await window.allai.forgetHistoryEntry(id);
+    await get().refreshHistoryQueue();
+    await get().refreshHistoryStats();
+  },
+
   clearHistory: async () => {
     await window.allai.clearHistory();
-    set({ historyStats: defaultHistoryStats() });
+    set({ historyStats: defaultHistoryStats(), historyQueue: null });
   },
 
   updatePreferences: async (patch) => {

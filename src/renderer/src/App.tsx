@@ -7,6 +7,7 @@ import { GlobalSearch } from './components/GlobalSearch';
 import { IndexConfirmDialog } from './components/IndexConfirmDialog';
 import { IndexReportDialog } from './components/IndexReportDialog';
 import { IndexStatusBar } from './components/IndexStatusBar';
+import { QueuePanel } from './components/QueuePanel';
 import { ServiceHost } from './components/ServiceHost';
 import { SettingsDialog } from './components/SettingsDialog';
 import { Sidebar } from './components/Sidebar';
@@ -70,6 +71,12 @@ export default function App() {
     store.setHistoryReport(report);
   }), []);
 
+  useEffect(() => window.allai.onHistoryUpdated(() => {
+    const store = useAppStore.getState();
+    void store.refreshHistoryQueue().catch(() => undefined);
+    void store.refreshHistoryStats().catch(() => undefined);
+  }), []);
+
   const indexingRunning = useAppStore((state) => state.historyProgress.running);
   const indexingFinishedAt = useAppStore((state) => state.historyProgress.finishedAt);
 
@@ -130,6 +137,9 @@ export default function App() {
         case 'settings':
           store.setSettingsOpen(true);
           break;
+        case 'queue':
+          store.toggleQueue();
+          break;
         case 'zoom-in':
           if (tabId) store.setZoom(tabId, (store.runtime[tabId]?.zoom ?? 0) + 0.5);
           break;
@@ -155,6 +165,7 @@ export default function App() {
           {isReady ? <ServiceHost onAdd={() => setAddOpen(true)} /> : <div className="loading">Loading…</div>}
           <IndexStatusBar />
         </main>
+        <QueuePanel />
         <AddServiceDialog />
         <SettingsDialog />
         <IndexConfirmDialog />

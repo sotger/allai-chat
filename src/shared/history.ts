@@ -50,6 +50,46 @@ export interface HistoryProgress {
   batchTotal?: number;
   /** Timestamp of the last finished run, for the "indexed N chats" note. */
   finishedAt?: number;
+  /** Manual runs work through the whole queue; automatic ones are a top-up. */
+  mode?: 'manual' | 'auto';
+  /** Conversations without text when the run started (all services in scope). */
+  queueInitial?: number;
+  /** Conversations still without text, recomputed as the run goes. */
+  queueRemaining?: number;
+  /** Saved and failed counters for the whole run, not just the current service. */
+  runSaved?: number;
+  runFailed?: number;
+  startedAt?: number;
+}
+
+/** One conversation that is known from a chat list but has no body text yet. */
+export interface HistoryQueueItem {
+  id: string;
+  tabId: string;
+  service: string;
+  url: string;
+  title: string;
+  capturedAt: number;
+}
+
+/** The unindexed conversations of one service. */
+export interface HistoryQueueGroup {
+  tabId: string;
+  service: string;
+  providerId: ProviderId;
+  color: string;
+  icon: string;
+  queued: number;
+  items: HistoryQueueItem[];
+  /** More rows exist than this snapshot carries. */
+  truncated?: boolean;
+}
+
+export interface HistoryQueueSnapshot {
+  groups: HistoryQueueGroup[];
+  queued: number;
+  withText: number;
+  entries: number;
 }
 
 export interface HistoryRunFailure {
