@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.7.3 — 2026-10-30
+
+### Fixed
+
+- **Claude's full `/chats` list is harvested.** The list is a table in `main`
+  (not `role=row`), so the main scroller was never touched and only the recent
+  sidebar chats were indexed. The deep harvest now scrolls `main` when it holds
+  a chat list (table anchors or `role=row`), collecting the virtualized rows.
+  On the author's profile this found **38** chats instead of 30, including the
+  oldest from April 2024.
+- The Perplexity library path is unaffected; both use the same main-list
+  scroll.
+
 ## 1.7.2 — 2026-10-30
 
 ### Fixed

@@ -134,7 +134,17 @@ export function harvestScript(options: { scroll?: boolean } = {}): string {
     // (Perplexity's library puts every session in <main>, not in the sidebar).
     const roots = [...document.querySelectorAll('nav, aside, [role="navigation"], [role="complementary"]')];
     const main = document.querySelector('main, [role="main"]');
-    if (main && main.querySelectorAll('[role="row"]').length >= 5) roots.push(main);
+    if (main) {
+      // Perplexity uses role=row; Claude's /chats list is a table of anchors.
+      const rows = main.querySelectorAll('[role="row"]').length;
+      const chatAnchors = [...main.querySelectorAll('a[href]')].filter((anchor) => {
+        try {
+          const path = new URL(anchor.href, location.href).pathname;
+          return /[0-9a-f]{8,}/i.test(path) || /(^|\\/)\\d{6,}(\\/|$)/.test(path);
+        } catch { return false; }
+      }).length;
+      if (rows >= 5 || chatAnchors >= 5) roots.push(main);
+    }
     let scroller = null;
     let best = 0;
     for (const root of roots) {
