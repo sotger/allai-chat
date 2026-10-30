@@ -267,11 +267,11 @@ sidebars for new titles, and **×** removes a row from the queue. A manual run
 works through the whole queue (2,000 chats per service is only a runaway guard),
 so **Stop** is the way to end it early. The width is remembered per machine.
 
-The harvester also follows a **View all** link (for example Perplexity's library)
-and reads list rows that are rendered without links, scrolling the whole session
-list into the queue. Utility pages (`/chats`, `/library`, `/projects`,
-`#subscribe`, sign-in screens) and private-link/access walls are never stored as
-conversations.
+The harvester follows a **View all** link — Perplexity's `/library`, Claude's
+`/chats` — and scrolls the main list, including virtualized tables and rows that
+are rendered without links, so the whole history reaches the queue. Utility
+pages (`/chats`, `/library`, `/projects`, `#subscribe`, sign-in screens) and
+private-link/access walls are never stored as conversations.
 
 Services are read one after another, each in its own hidden window, with an
 extra 15–30 second pause between them, so the switch from one site to the next
