@@ -56,6 +56,12 @@
   Gemini and DeepSeek were the reported cases), falls back to one native Return
   if the click did nothing, and reports "inserted — send button did not respond"
   instead of claiming success. The previous tab is restored afterwards.
+- **Changing the sync folder works immediately.** The snapshot cache was tied to
+  the data, not to the folder, so after switching folders (or deleting the JSON
+  file) a sync could skip the write, fail with `ENOENT` on the new folder and
+  leave no file at all. The cache is now per folder, the app checks that its own
+  file still exists, and **Sync now** waits for an in-flight pass before running
+  again.
 - **Clear index** now records a sync-wide clear marker, so a cloud copy cannot
   restore what was just deleted.
 - Closing a service tab records a local-only tombstone: its conversations do not

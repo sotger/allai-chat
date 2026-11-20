@@ -316,6 +316,8 @@ without a backend:
   every ten minutes and on launch. It also reads the other devices' files and
   merges their conversations into the local index. Only the cloud client
   transfers data; ALLAI-CHAT opens no network connection for this.
+- **Change…** writes a fresh snapshot into the newly chosen folder immediately.
+  If the JSON file is deleted or moved, the next sync recreates it.
 - Entries are matched to a local tab by service, then by tab label, then by host.
   If two tabs of the same service could match and neither label is unique, the
   row is skipped rather than mixed between accounts. Give such tabs different

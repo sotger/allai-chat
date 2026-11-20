@@ -31,11 +31,12 @@ export type { DetectedSyncFolder, SyncStatus } from '@shared/sync';
 export class HistorySync {
   private deviceId = '';
   private deviceName = '';
-  private running = false;
-  private queued = false;
+  private runPromise: Promise<SyncStatus> | undefined;
+  private queuedRun: Promise<SyncStatus> | undefined;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private interval: ReturnType<typeof setInterval> | undefined;
   private lastSignature = '';
+  private lastFolder = '';
   private status: SyncStatus = {
     enabled: false,
     folder: '',
@@ -113,7 +114,6 @@ export class HistorySync {
   /** Called after every local capture; a cloud folder does not need instant writes. */
   schedule(delayMs = 120_000): void {
     if (!this.deps.isEnabled() || !this.deps.getFolder()) return;
-    if (this.running) return;
     if (this.timer) return;
     this.timer = setTimeout(() => {
       this.timer = undefined;
@@ -123,21 +123,33 @@ export class HistorySync {
 
   /**
    * Writes this device's snapshot, then merges every other device's file into
-   * the local index. Runs are serialized; a request during a run is coalesced.
+   * the local index. A call made while a run is in progress waits for it and
+   * then starts one more pass, so "Sync now" after changing the folder never
+   * returns a stale status and never skips the new folder.
    */
-  async syncNow(): Promise<SyncStatus> {
+  syncNow(): Promise<SyncStatus> {
+    if (this.runPromise) {
+      if (!this.queuedRun) {
+        this.queuedRun = this.runPromise.then(() => {
+          this.queuedRun = undefined;
+          return this.syncNow();
+        });
+      }
+      return this.queuedRun;
+    }
+    this.runPromise = this.runOnce().finally(() => {
+      this.runPromise = undefined;
+    });
+    return this.runPromise;
+  }
+
+  private async runOnce(): Promise<SyncStatus> {
     const folder = this.deps.getFolder();
     if (!this.deviceId) this.init();
     if (!this.deps.isEnabled() || !folder) {
       this.publish();
       return this.getStatus();
     }
-
-    if (this.running) {
-      this.queued = true;
-      return this.getStatus();
-    }
-    this.running = true;
 
     try {
       await this.deps.store.load();
@@ -194,12 +206,6 @@ export class HistorySync {
       };
       this.publish();
       return this.getStatus();
-    } finally {
-      this.running = false;
-      if (this.queued) {
-        this.queued = false;
-        this.schedule(2000);
-      }
     }
   }
 
@@ -291,7 +297,17 @@ export class HistorySync {
 
   private async writeSnapshot(folder: string, force = false): Promise<void> {
     const signature = this.signature();
-    if (!force && signature === this.lastSignature) return;
+    const target = path.join(folder, syncFileName(this.deviceId));
+
+    // `lastSignature` is only valid for the folder it was written to. Switching
+    // folders, deleting the file, or a failed write must produce a fresh copy;
+    // otherwise the new folder is never created and the read below fails.
+    if (!force && folder === this.lastFolder && signature === this.lastSignature) {
+      try {
+        await fsp.access(target);
+        return;
+      } catch { /* the file was moved or deleted: rewrite it */ }
+    }
 
     const file: HistorySyncFile = {
       format: 'allai-history',
@@ -306,11 +322,11 @@ export class HistorySync {
     };
 
     await fsp.mkdir(folder, { recursive: true });
-    const target = path.join(folder, syncFileName(this.deviceId));
     const temp = `${target}.tmp`;
     await fsp.writeFile(temp, JSON.stringify(file), 'utf-8');
     await fsp.rename(temp, target);
     this.lastSignature = signature;
+    this.lastFolder = folder;
   }
 
   /** Manual "Export…": one self-contained file the user can move anywhere. */
