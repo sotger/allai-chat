@@ -5,6 +5,7 @@ import type {
   HistoryReport,
   HistoryStats
 } from '@shared/history';
+import type { SyncStatus } from '@shared/sync';
 import type { AppState, Preferences, ServiceTab } from '@shared/types';
 import { create } from 'zustand';
 
@@ -34,7 +35,9 @@ export function defaultPreferences(): Preferences {
     reuseGoogleSignIn: true,
     uiFontSize: 13,
     historyIndexEnabled: true,
-    historyBackfillEnabled: false
+    historyBackfillEnabled: false,
+    syncFolder: '',
+    syncEnabled: false
   };
 }
 
@@ -74,6 +77,7 @@ interface AppStore {
   historyStats: HistoryStats;
   historyProgress: HistoryProgress;
   historyQueue: HistoryQueueSnapshot | null;
+  syncStatus: SyncStatus | null;
   queueOpen: boolean;
   indexConfirmOpen: boolean;
   historyReport: HistoryReport | null;
@@ -100,6 +104,13 @@ interface AppStore {
   setHistoryStats: (stats: HistoryStats) => void;
   setHistoryProgress: (progress: HistoryProgress) => void;
   setHistoryQueue: (queue: HistoryQueueSnapshot | null) => void;
+  setSyncStatus: (status: SyncStatus | null) => void;
+  refreshSyncStatus: () => Promise<void>;
+  syncHistoryNow: () => Promise<void>;
+  chooseSyncFolder: () => Promise<void>;
+  openSyncFolder: () => Promise<void>;
+  exportHistory: () => Promise<void>;
+  importHistory: () => Promise<void>;
   setQueueOpen: (open: boolean) => void;
   toggleQueue: () => void;
   setIndexConfirmOpen: (open: boolean) => void;
@@ -149,21 +160,23 @@ export const useAppStore = create<AppStore>((set, get) => ({
   historyStats: defaultHistoryStats(),
   historyProgress: defaultHistoryProgress(),
   historyQueue: null,
+  syncStatus: null,
   queueOpen: initialQueueOpen(),
   indexConfirmOpen: false,
   historyReport: null,
 
   bootstrap: async () => {
-    const [state, preferences, downloads, historyStats, historyProgress, historyQueue] = await Promise.all([
+    const [state, preferences, downloads, historyStats, historyProgress, historyQueue, syncStatus] = await Promise.all([
       window.allai.getState(),
       window.allai.getPreferences(),
       window.allai.getDownloads(),
       window.allai.getHistoryStats(),
       window.allai.getHistoryProgress(),
-      window.allai.getHistoryQueue()
+      window.allai.getHistoryQueue(),
+      window.allai.getSyncStatus()
     ]);
     get().applyState(state);
-    set({ preferences, downloads, historyStats, historyProgress, historyQueue, isReady: true });
+    set({ preferences, downloads, historyStats, historyProgress, historyQueue, syncStatus, isReady: true });
   },
 
   applyState: (state) => {
@@ -245,6 +258,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setHistoryStats: (historyStats) => set({ historyStats }),
   setHistoryProgress: (historyProgress) => set({ historyProgress }),
   setHistoryQueue: (historyQueue) => set({ historyQueue }),
+  setSyncStatus: (syncStatus) => set({ syncStatus }),
   setQueueOpen: (open) => {
     try { localStorage.setItem('allai.queue-open', open ? '1' : '0'); } catch { /* ignore */ }
     set({ queueOpen: open });
@@ -286,6 +300,56 @@ export const useAppStore = create<AppStore>((set, get) => ({
   clearHistory: async () => {
     await window.allai.clearHistory();
     set({ historyStats: defaultHistoryStats(), historyQueue: null });
+    void get().syncHistoryNow();
+  },
+
+  refreshSyncStatus: async () => {
+    const syncStatus = await window.allai.getSyncStatus();
+    set({ syncStatus });
+  },
+
+  syncHistoryNow: async () => {
+    await runAction(set, async () => {
+      const syncStatus = await window.allai.syncHistoryNow();
+      set({ syncStatus });
+      await get().refreshHistoryStats();
+      await get().refreshHistoryQueue();
+    });
+  },
+
+  chooseSyncFolder: async () => {
+    const folder = await window.allai.chooseSyncFolder();
+    if (!folder) return;
+    set((store) => ({ preferences: { ...store.preferences, syncFolder: folder, syncEnabled: true } }));
+    await get().syncHistoryNow();
+  },
+
+  openSyncFolder: async () => {
+    await window.allai.openSyncFolder();
+  },
+
+  exportHistory: async () => {
+    await runAction(set, async () => {
+      const result = await window.allai.exportHistory();
+      if (result.canceled) return;
+      const name = result.path?.split(/[\\/]/).pop();
+      set({
+        notice: name
+          ? `Exported ${result.entries.toLocaleString()} conversations to ${name}`
+          : `Exported ${result.entries.toLocaleString()} conversations.`
+      });
+    });
+  },
+
+  importHistory: async () => {
+    await runAction(set, async () => {
+      const result = await window.allai.importHistory();
+      if (result.canceled) return;
+      set({ notice: `Import finished: ${result.summary}` });
+      await get().refreshHistoryStats();
+      await get().refreshHistoryQueue();
+      if (get().preferences.syncEnabled) void get().syncHistoryNow();
+    });
   },
 
   updatePreferences: async (patch) => {

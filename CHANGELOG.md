@@ -1,5 +1,66 @@
 # Changelog
 
+## 1.8.0 — 2026-11-20
+
+### Added
+
+- **Sync and export the local index.** **Settings → Sync & backup** writes one
+  portable `allai-history-<device>.json` per computer into a folder your cloud
+  client already syncs (iCloud Drive, Google Drive, OneDrive, Dropbox,
+  Nextcloud, a network share) and merges the other devices' files. There is no
+  OAuth, API key or backend: the cloud app moves the file. **Export…** and
+  **Import…** work without enabling cloud sync.
+- Sync is conflict-aware: a per-conversation tombstone stops a deleted chat from
+  coming back, **Clear index** propagates to the other devices, and an entry
+  captured after a deletion survives. Rows are attached to a local tab by
+  service, label and host; ambiguous tabs are skipped instead of mixing
+  accounts.
+- **Settings, updates and releases in the macOS application menu.** `ALLAI-CHAT`
+  now contains **Settings…** (`Cmd+,`), **Check for Updates…** and **Releases on
+  GitHub**; Windows and Linux keep Settings in **View** and get the release
+  links in **Help**.
+- **macOS self-update for ad-hoc builds.** Squirrel.Mac refused to install
+  updates without a Developer ID, so the fallback updater talks to the GitHub
+  API directly, downloads the matching Intel/Apple Silicon zip, verifies its
+  SHA-256 digest, replaces the `.app` after quitting and relaunches it. If the
+  bundle is not writable (mounted DMG, App Translocation), it opens the release
+  page instead. Background checks ask once per version; **Check for Updates…**
+  is always available.
+- **Broadcast starts a new chat in every service.** **Send a prompt to all
+  services** now clicks each service's "New chat" control (or opens its known
+  new-conversation address) before typing, so the prompt no longer lands in
+  whichever conversation was open. **Start a new chat first** can be unticked to
+  keep the old behaviour, and per-service results say whether a new chat was
+  started.
+
+### Changed
+
+- Update status is reported in the app's toast area: downloading percentage,
+  "update downloaded" and errors, on every platform.
+- The macOS menu no longer duplicates **Settings…** in **View**.
+- Provider configs gained a `newChatUrl`, used only as a fallback when the site's
+  own "New chat" control cannot be found.
+
+### Fixed
+
+- **Sync folder selection is reversible.** The detected cloud folders are always
+  shown; each account has its own label (for example two Google Drive accounts
+  include their addresses), the active one is checked, and the folder button
+  says **Change…** once a folder is set.
+- **Dialog headers stay visible.** The title and the close button of Settings,
+  Broadcast and the other modal windows are sticky, so scrolling the body never
+  hides the ×.
+- **Broadcast send is verified.** After the text is inserted, the app waits for
+  an enabled send control, clicks it and reads the composer back. Sending makes
+  each tab briefly visible/focused (some services ignore a background click —
+  Gemini and DeepSeek were the reported cases), falls back to one native Return
+  if the click did nothing, and reports "inserted — send button did not respond"
+  instead of claiming success. The previous tab is restored afterwards.
+- **Clear index** now records a sync-wide clear marker, so a cloud copy cannot
+  restore what was just deleted.
+- Closing a service tab records a local-only tombstone: its conversations do not
+  return from the cloud, but the same service on another computer is untouched.
+
 ## 1.7.3 — 2026-10-30
 
 ### Fixed

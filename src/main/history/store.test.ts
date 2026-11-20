@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { HistoryEntry } from '@shared/history';
+import { syncKey } from '@shared/sync';
 
 import { HistoryStore } from './store';
 
@@ -244,5 +245,69 @@ describe('HistoryStore', () => {
 
     expect(store.stats().entries).toBe(0);
     expect(lines(dir)).toHaveLength(0);
+  });
+
+  it('propagates an explicit forget but keeps a tab wipe local', async () => {
+    const dir = tempDir();
+    const store = new HistoryStore(dir);
+    await store.load();
+
+    store.upsert(entry('a', 'alpha', { url: 'https://chatgpt.com/c/aaaa1111' }));
+    store.upsert(entry('b', 'beta', { tabId: 't2', url: 'https://chatgpt.com/c/bbbb2222' }));
+
+    store.removeById('a');
+    await store.removeTab('t2');
+
+    const keys = store.tombstonesForSync().map((item) => item.key);
+    expect(keys).toContain(syncKey('chatgpt', 'https://chatgpt.com/c/aaaa1111'));
+    // Closing a service must not delete the same conversation on another device.
+    expect(keys).not.toContain(syncKey('chatgpt', 'https://chatgpt.com/c/bbbb2222'));
+    expect(store.isTombstoned('chatgpt', 'https://chatgpt.com/c/bbbb2222', 1)).toBe(true);
+  });
+
+  it('a remote clear removes older captures and allows newer ones', async () => {
+    const dir = tempDir();
+    const store = new HistoryStore(dir);
+    await store.load();
+    store.upsert(entry('a', 'old', { capturedAt: 100, url: 'https://chatgpt.com/c/eeee5555' }));
+    store.upsert(entry('b', 'new', { capturedAt: 300, url: 'https://chatgpt.com/c/ffff6666' }));
+    store.flushSync();
+
+    const removed = await store.applyRemoteClear(200);
+
+    expect(removed).toBe(1);
+    expect(store.get('a')).toBeUndefined();
+    expect(store.get('b')).toBeDefined();
+    expect(store.isTombstoned('chatgpt', 'https://chatgpt.com/c/eeee5555', 100)).toBe(true);
+    expect(store.isTombstoned('chatgpt', 'https://chatgpt.com/c/eeee5555', 300)).toBe(false);
+  });
+
+  it('applies a deletion from another device and keeps newer captures', async () => {
+    const dir = tempDir();
+    const store = new HistoryStore(dir);
+    await store.load();
+
+    store.upsert(entry('old', 'old text', {
+      capturedAt: 100,
+      url: 'https://chatgpt.com/c/cccc3333'
+    }));
+    store.upsert(entry('new', 'new text', {
+      capturedAt: 300,
+      url: 'https://chatgpt.com/c/dddd4444'
+    }));
+
+    const removed = await store.applyRemoteTombstones([
+      { key: syncKey('chatgpt', 'https://chatgpt.com/c/cccc3333'), deletedAt: 200 },
+      { key: syncKey('chatgpt', 'https://chatgpt.com/c/dddd4444'), deletedAt: 200 }
+    ]);
+
+    expect(removed).toBe(1);
+    expect(store.get('old')).toBeUndefined();
+    expect(store.get('new')).toBeDefined();
+
+    const reloaded = new HistoryStore(dir);
+    await reloaded.load();
+    expect(reloaded.get('old')).toBeUndefined();
+    expect(reloaded.get('new')).toBeDefined();
   });
 });

@@ -13,6 +13,7 @@ export function BroadcastDialog() {
 
   const [text, setText] = useState('');
   const [send, setSend] = useState(false);
+  const [newChat, setNewChat] = useState(true);
   const [busy, setBusy] = useState(false);
   const [results, setResults] = useState<BroadcastResult[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -21,6 +22,7 @@ export function BroadcastDialog() {
     if (!open) return;
     setText('');
     setSend(false);
+    setNewChat(true);
     setBusy(false);
     setResults([]);
     requestAnimationFrame(() => textareaRef.current?.focus());
@@ -37,7 +39,7 @@ export function BroadcastDialog() {
     setBusy(true);
     setResults([]);
     try {
-      const out = await window.allai.broadcastPrompt(text, send);
+      const out = await window.allai.broadcastPrompt(text, send, undefined, newChat);
       setResults(out);
     } finally {
       setBusy(false);
@@ -46,6 +48,8 @@ export function BroadcastDialog() {
 
   const byTab = new Map(tabs.map((tab) => [tab.id, tab]));
   const okCount = results.filter((result) => result.ok).length;
+  const sentCount = results.filter((result) => result.submitted).length;
+  const sendFailed = results.filter((result) => result.ok && !result.submitted).length;
   const failed = results.filter((result) => !result.ok);
 
   return (
@@ -58,7 +62,8 @@ export function BroadcastDialog() {
 
         <p className="muted broadcast-hint">
           The text is inserted into the message box of every open service, each in its own
-          session. By default nothing is sent — review each tab and press Enter yourself.
+          session. By default each service first opens a fresh conversation, so the prompt never
+          lands in a chat that happens to be open. Nothing is sent unless you enable it below.
         </p>
 
         <textarea
@@ -77,35 +82,52 @@ export function BroadcastDialog() {
         />
 
         <div className="broadcast-actions">
-          <label className="settings-check broadcast-send">
-            <input
-              type="checkbox"
-              checked={send}
-              onChange={(event) => setSend(event.target.checked)}
-            />
-            <span>
-              Also press send
-              <span className="settings-help">
-                Clicks each service's send button, or presses Enter when no button can be
-                found. The prompt is submitted without further review.
+          <div className="broadcast-options">
+            <label className="settings-check broadcast-send">
+              <input
+                type="checkbox"
+                checked={newChat}
+                onChange={(event) => setNewChat(event.target.checked)}
+              />
+              <span>
+                Start a new chat first
+                <span className="settings-help">
+                  Clicks each service's "New chat" control, or opens its new-conversation
+                  address. Turn this off to append to the conversation that is already open.
+                </span>
               </span>
-            </span>
-          </label>
+            </label>
+            <label className="settings-check broadcast-send">
+              <input
+                type="checkbox"
+                checked={send}
+                onChange={(event) => setSend(event.target.checked)}
+              />
+              <span>
+                Also press send
+                <span className="settings-help">
+                  Clicks each service's send button, or presses Enter when no button can be
+                  found. The prompt is submitted without further review.
+                </span>
+              </span>
+            </label>
+          </div>
 
           <button
             className="primary-button"
             onClick={() => void run()}
             disabled={busy || !text.trim() || tabs.length === 0}
           >
-            {busy ? 'Inserting…' : `Insert into ${tabs.length} service${tabs.length === 1 ? '' : 's'}`}
+            {busy ? 'Preparing…' : `Insert into ${tabs.length} service${tabs.length === 1 ? '' : 's'}`}
           </button>
         </div>
 
         {results.length > 0 && (
           <div className="broadcast-results">
             <p className="broadcast-summary">
-              Inserted into {okCount} of {results.length} services
-              {send ? ' and pressed send.' : '.'}
+              {newChat ? 'Started a new chat and inserted into' : 'Inserted into'} {okCount} of {results.length} services
+              {send && sentCount > 0 ? ` and sent ${sentCount}.` : '.'}
+              {send && sendFailed > 0 ? ` ${sendFailed} still need the send button.` : ''}
               {failed.length > 0 ? ' Some services need a manual paste.' : ''}
             </p>
             {results.map((result) => {
@@ -116,7 +138,13 @@ export function BroadcastDialog() {
                   <span className="broadcast-service">{tab?.label ?? result.tabId}</span>
                   <span className="broadcast-detail">
                     {result.ok
-                      ? result.submitted ? 'inserted and sent' : 'inserted'
+                      ? `${result.startedNewChat ? 'new chat, ' : ''}${
+                        result.submitted
+                          ? 'inserted and sent'
+                          : result.reason
+                            ? `inserted — ${result.reason}`
+                            : 'inserted'
+                      }`
                       : result.reason ?? 'not inserted'}
                   </span>
                 </div>
@@ -126,8 +154,10 @@ export function BroadcastDialog() {
         )}
 
         <p className="modal-hint">
-          Tip: Cmd/Ctrl+Enter inserts immediately. Sites that block scripted input may need
-          a manual paste — the row will say so.
+          Tip: Cmd/Ctrl+Enter inserts immediately. Starting a new chat takes a few seconds per
+          service. Sending briefly activates each tab, because some services ignore a click while
+          their tab is in the background. Sites that block scripted input may need a manual paste —
+          the row will say so.
         </p>
       </div>
     </div>

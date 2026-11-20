@@ -7,98 +7,112 @@ export const PROVIDER_CONFIGS: Record<ProviderId, ProviderConfig> = {
     displayName: 'ChatGPT',
     url: 'https://chatgpt.com',
     color: '#10a37f',
-    icon: 'G'
+    icon: 'G',
+    newChatUrl: 'https://chatgpt.com/'
   },
   claude: {
     id: 'claude',
     displayName: 'Claude',
     url: 'https://claude.ai',
     color: '#d4a574',
-    icon: 'C'
+    icon: 'C',
+    newChatUrl: 'https://claude.ai/new'
   },
   gemini: {
     id: 'gemini',
     displayName: 'Gemini',
     url: 'https://gemini.google.com/app',
     color: '#4ecdc4',
-    icon: 'Ge'
+    icon: 'Ge',
+    newChatUrl: 'https://gemini.google.com/app'
   },
   copilot: {
     id: 'copilot',
     displayName: 'Copilot',
     url: 'https://copilot.microsoft.com',
     color: '#7c3aed',
-    icon: 'Co'
+    icon: 'Co',
+    newChatUrl: 'https://copilot.microsoft.com/'
   },
   perplexity: {
     id: 'perplexity',
     displayName: 'Perplexity',
     url: 'https://www.perplexity.ai',
     color: '#f472b6',
-    icon: 'P'
+    icon: 'P',
+    newChatUrl: 'https://www.perplexity.ai/'
   },
   deepseek: {
     id: 'deepseek',
     displayName: 'DeepSeek',
     url: 'https://chat.deepseek.com',
     color: '#58a6ff',
-    icon: 'D'
+    icon: 'D',
+    newChatUrl: 'https://chat.deepseek.com/'
   },
   grok: {
     id: 'grok',
     displayName: 'Grok',
     url: 'https://grok.com',
     color: '#fbbf24',
-    icon: 'Gk'
+    icon: 'Gk',
+    newChatUrl: 'https://grok.com/'
   },
   huggingchat: {
     id: 'huggingchat',
     displayName: 'HuggingChat',
     url: 'https://huggingface.co/chat',
     color: '#ff6b35',
-    icon: 'H'
+    icon: 'H',
+    newChatUrl: 'https://huggingface.co/chat/'
   },
   kimi: {
     id: 'kimi',
     displayName: 'Kimi',
     url: 'https://kimi.moonshot.cn',
     color: '#6366f1',
-    icon: 'Ki'
+    icon: 'Ki',
+    newChatUrl: 'https://kimi.moonshot.cn/'
   },
   glm: {
     id: 'glm',
     displayName: 'ChatGLM',
     url: 'https://chatglm.cn',
     color: '#22c55e',
-    icon: 'GL'
+    icon: 'GL',
+    newChatUrl: 'https://chatglm.cn/'
   },
   mistral: {
     id: 'mistral',
     displayName: 'Mistral Vibe',
     url: 'https://chat.mistral.ai',
     color: '#f97316',
-    icon: 'Mi'
+    icon: 'Mi',
+    newChatUrl: 'https://chat.mistral.ai/chat'
   },
   you: {
     id: 'you',
     displayName: 'You.com',
     url: 'https://you.com',
     color: '#06b6d4',
-    icon: 'Y'
+    icon: 'Y',
+    newChatUrl: 'https://you.com/'
   },
   phind: {
     id: 'phind',
     displayName: 'Phind',
     url: 'https://www.phind.com',
     color: '#a855f7',
-    icon: 'Ph'
+    icon: 'Ph',
+    newChatUrl: 'https://www.phind.com/'
   },
   poe: {
     id: 'poe',
     displayName: 'Poe',
     url: 'https://poe.com',
     color: '#84cc16',
-    icon: 'Po'
+    icon: 'Po',
+    newChatUrl: 'https://poe.com/'
   },
   custom: {
     id: 'custom',

@@ -7,6 +7,7 @@ import type {
   HistoryStats,
   ServerSearchHit
 } from './history';
+import type { DetectedSyncFolder, SyncStatus } from './sync';
 import type { AppState, Preferences, ProviderId, ServiceTab } from './types';
 
 export interface SearchHit {
@@ -24,6 +25,32 @@ export interface BroadcastResult {
   ok: boolean;
   reason?: string;
   submitted?: boolean;
+  /** The service had a fresh conversation before the text was inserted. */
+  startedNewChat?: boolean;
+}
+
+export interface HistoryExportResult {
+  canceled: boolean;
+  path?: string;
+  entries: number;
+}
+
+export interface HistoryImportResult {
+  canceled: boolean;
+  summary: string;
+  imported: number;
+  upgraded: number;
+  tombstoned: number;
+  noTab: number;
+  unchanged: number;
+}
+
+/** Progress of the macOS fallback updater, streamed to the renderer. */
+export interface UpdateStatus {
+  state: 'checking' | 'available' | 'downloading' | 'downloaded' | 'none' | 'error';
+  version?: string;
+  percent?: number;
+  message?: string;
 }
 
 export interface AppInfo {
@@ -100,10 +127,22 @@ export interface AllaiApi {
   openSearchResult: (tabId: string, query: string, inList: boolean) => Promise<number>;
   findInPage: (tabId: string, query: string, options?: { forward?: boolean; findNext?: boolean }) => Promise<number>;
   stopAllFind: () => Promise<void>;
-  broadcastPrompt: (text: string, submit: boolean, tabIds?: string[]) => Promise<BroadcastResult[]>;
+  broadcastPrompt: (
+    text: string,
+    submit: boolean,
+    tabIds?: string[],
+    newChat?: boolean
+  ) => Promise<BroadcastResult[]>;
   getPreferences: () => Promise<Preferences>;
   updatePreferences: (patch: Partial<Preferences>) => Promise<Preferences>;
   chooseDownloadDirectory: () => Promise<string>;
+  getSyncStatus: () => Promise<SyncStatus>;
+  getSyncFolders: () => Promise<DetectedSyncFolder[]>;
+  chooseSyncFolder: () => Promise<string>;
+  openSyncFolder: () => Promise<void>;
+  syncHistoryNow: () => Promise<SyncStatus>;
+  exportHistory: () => Promise<HistoryExportResult>;
+  importHistory: () => Promise<HistoryImportResult>;
   openGoogleSignIn: () => Promise<void>;
   syncGoogleSignIn: () => Promise<number>;
   getDownloads: () => Promise<DownloadRecord[]>;
@@ -130,6 +169,8 @@ export interface AllaiApi {
   onHistoryProgress: (listener: (progress: HistoryProgress) => void) => () => void;
   onHistoryReport: (listener: (report: HistoryReport) => void) => () => void;
   onHistoryUpdated: (listener: () => void) => () => void;
+  onSyncStatus: (listener: (status: SyncStatus) => void) => () => void;
+  onUpdateStatus: (listener: (status: UpdateStatus) => void) => () => void;
 }
 
 export const IPC_CHANNELS = {
@@ -152,6 +193,13 @@ export const IPC_CHANNELS = {
   getPreferences: 'allai:get-preferences',
   updatePreferences: 'allai:update-preferences',
   chooseDownloadDirectory: 'allai:choose-download-directory',
+  getSyncStatus: 'allai:get-sync-status',
+  getSyncFolders: 'allai:get-sync-folders',
+  chooseSyncFolder: 'allai:choose-sync-folder',
+  openSyncFolder: 'allai:open-sync-folder',
+  syncHistoryNow: 'allai:sync-history-now',
+  exportHistory: 'allai:export-history',
+  importHistory: 'allai:import-history',
   openGoogleSignIn: 'allai:open-google-sign-in',
   syncGoogleSignIn: 'allai:sync-google-sign-in',
   getDownloads: 'allai:get-downloads',
@@ -177,5 +225,7 @@ export const IPC_CHANNELS = {
   googleSignInDone: 'allai:event:google-sign-in-done',
   historyProgress: 'allai:event:history-progress',
   historyReport: 'allai:event:history-report',
-  historyUpdated: 'allai:event:history-updated'
+  historyUpdated: 'allai:event:history-updated',
+  syncStatus: 'allai:event:sync-status',
+  updateStatus: 'allai:event:update-status'
 } as const;

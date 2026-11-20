@@ -655,6 +655,13 @@ button {
   cursor: default;
 }
 
+.secondary-button.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
 /* ── Add service dialog ──────────────────────────────────────────── */
 .modal-backdrop {
   position: fixed;
@@ -671,18 +678,27 @@ button {
   width: min(720px, 100%);
   max-height: min(640px, 100%);
   overflow-y: auto;
-  padding: 18px 20px 16px;
+  padding: 0 20px 16px;
   border: 1px solid var(--modal-border);
   border-radius: 14px;
   background: var(--modal-bg);
   box-shadow: var(--modal-shadow);
 }
 
+/* Keep the title and the close button visible while the body scrolls. The
+   modal has no top padding: the sticky header supplies it, so content cannot
+   show above the title while scrolled. */
 .modal-header {
+  position: sticky;
+  top: 0;
+  z-index: 3;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 14px;
+  margin: 0 -20px 4px;
+  padding: 18px 20px 10px;
+  border-radius: 14px 14px 0 0;
+  background: var(--modal-bg);
 }
 
 .modal-header h2 {
@@ -911,6 +927,16 @@ button {
 .settings-hint {
   margin-top: 10px;
   line-height: 1.5;
+}
+
+.sync-suggestions {
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.sync-suggestions .secondary-button {
+  padding: 5px 9px;
+  font-size: calc(11.5px * var(--ui-scale));
 }
 
 /* ── Downloads ───────────────────────────────────────────────────── */
@@ -1405,6 +1431,13 @@ button {
   justify-content: space-between;
   gap: 16px;
   margin-top: 12px;
+}
+
+.broadcast-options {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
 }
 
 .broadcast-send {

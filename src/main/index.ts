@@ -25,18 +25,20 @@ import { GOOGLE_SIGNIN_PARTITION, copyGoogleCookies, hasGoogleSession } from './
 import { getPreferences, isDarkTheme, loadPreferences, savePreferences } from './preferences';
 import { contentsForTab, findInTab, openSearchResult, searchTabs, stopAllFind } from './search';
 import { broadcastPrompt } from './broadcast';
-import { checkForUpdates, initAutoUpdater } from './updater';
+import { checkForUpdates, initAutoUpdater, RELEASES_URL } from './updater';
 import { HistoryBackfill } from './history/backfill';
 import { capturePage, harvestTitles, titleEntry, toHistoryEntry } from './history/capture';
 import { HistoryReconciler } from './history/reconcile';
 import { isChatGptUrl, searchChatGpt } from './history/server-search';
 import { HistoryStore } from './history/store';
+import { HistorySync, detectSyncFolders } from './sync';
 import {
   chatKey,
   historyId,
   looksLikeChatUrl,
   type HistoryQueueSnapshot
 } from '@shared/history';
+import { describeSyncMerge } from '@shared/sync';
 
 // ── Chrome fingerprint (Google blocks embedded browsers without this) ──
 const chromeVersion = process.versions.chrome || '138.0.0.0';
@@ -91,12 +93,15 @@ const historyStore = new HistoryStore(app.getPath('userData'));
 // The queue panel listens to one throttled signal instead of every capture.
 let historyUpdatedTimer: ReturnType<typeof setTimeout> | undefined;
 historyStore.setOnChange(() => {
+  historySync?.schedule();
   if (historyUpdatedTimer) return;
   historyUpdatedTimer = setTimeout(() => {
     historyUpdatedTimer = undefined;
     sendToRenderer(IPC_CHANNELS.historyUpdated, { at: Date.now() });
   }, 400);
 });
+
+let historySync: HistorySync | undefined;
 
 const historyBackfill = new HistoryBackfill({
   store: historyStore,
@@ -202,6 +207,17 @@ function saveWindowBounds(win: BrowserWindow): void {
 
 // ── Tab state ────────────────────────────────────────────────────────
 const state: AppState = { tabs: [], activeTabId: null };
+
+// Cloud-folder sync: one portable JSON file per device in a folder the user
+// already syncs. No API, no OAuth; the cloud client moves the file.
+historySync = new HistorySync({
+  store: historyStore,
+  getTabs: () => state.tabs,
+  getFolder: () => getPreferences().syncFolder,
+  isEnabled: () => getPreferences().syncEnabled,
+  onStatus: (status) => sendToRenderer(IPC_CHANNELS.syncStatus, status),
+  onIndexChanged: () => sendToRenderer(IPC_CHANNELS.historyUpdated, { at: Date.now() })
+});
 
 /** How many queue rows per service are sent to the panel in one snapshot. */
 const QUEUE_ITEMS_PER_GROUP = 500;
@@ -1073,8 +1089,67 @@ function rebuildMenu(): void {
     { label: 'Previous Service', accelerator: 'Ctrl+Shift+Tab', click: () => cycleTab(-1) }
   );
 
+  const settingsItem: MenuItemConstructorOptions = {
+    label: 'Settings…',
+    accelerator: 'CmdOrCtrl+,',
+    click: () => sendMenuAction('settings')
+  };
+  const updatesItem: MenuItemConstructorOptions = {
+    label: 'Check for Updates…',
+    click: () => checkForUpdates(true)
+  };
+  const releasesItem: MenuItemConstructorOptions = {
+    label: 'Releases on GitHub',
+    click: () => openExternalSafe(RELEASES_URL)
+  };
+
+  // On macOS "Settings…", "Check for Updates…" and the release link belong in
+  // the application menu, where users look for them (Cmd+, included).
+  const appMenu: MenuItemConstructorOptions = {
+    label: app.getName(),
+    submenu: [
+      { role: 'about' },
+      { type: 'separator' },
+      updatesItem,
+      releasesItem,
+      { type: 'separator' },
+      settingsItem,
+      { type: 'separator' },
+      { role: 'services' },
+      { type: 'separator' },
+      { role: 'hide' },
+      { role: 'hideOthers' },
+      { role: 'unhide' },
+      { type: 'separator' },
+      { role: 'quit' }
+    ]
+  };
+
+  const viewItems: MenuItemConstructorOptions[] = [
+    { label: 'Reload Service', accelerator: 'CmdOrCtrl+R', click: () => sendMenuAction('reload') },
+    { label: 'Force Reload Service', accelerator: 'CmdOrCtrl+Shift+R', click: () => sendMenuAction('force-reload') },
+    { label: 'Find in Service…', accelerator: 'CmdOrCtrl+F', click: () => sendMenuAction('find') },
+    { label: 'Find in All Services…', accelerator: 'CmdOrCtrl+Shift+F', click: () => sendMenuAction('find-all') },
+    { label: 'Unindexed Conversations', accelerator: 'CmdOrCtrl+Shift+U', click: () => sendMenuAction('queue') },
+    { label: 'Send Prompt to All Services…', accelerator: 'CmdOrCtrl+Shift+Enter', click: () => sendMenuAction('broadcast') },
+    { type: 'separator' },
+    { label: 'Downloads', accelerator: 'CmdOrCtrl+J', click: () => sendMenuAction('downloads') },
+    ...(process.platform === 'darwin' ? [] : [settingsItem]),
+    { type: 'separator' },
+    { label: 'Zoom In', accelerator: 'CmdOrCtrl+Plus', click: () => sendMenuAction('zoom-in') },
+    { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', click: () => sendMenuAction('zoom-out') },
+    { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: () => sendMenuAction('zoom-reset') },
+    { type: 'separator' },
+    { role: 'togglefullscreen' }
+  ];
+
+  const helpItems: MenuItemConstructorOptions[] = [
+    ...(process.platform === 'darwin' ? [] : [updatesItem, releasesItem]),
+    { label: 'Report an Issue…', click: () => openExternalSafe(ISSUES_URL) }
+  ];
+
   const template: MenuItemConstructorOptions[] = [
-    ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
+    ...(process.platform === 'darwin' ? [appMenu] : []),
     { role: 'editMenu' },
     {
       label: 'Services',
@@ -1082,31 +1157,12 @@ function rebuildMenu(): void {
     },
     {
       label: 'View',
-      submenu: [
-        { label: 'Reload Service', accelerator: 'CmdOrCtrl+R', click: () => sendMenuAction('reload') },
-        { label: 'Force Reload Service', accelerator: 'CmdOrCtrl+Shift+R', click: () => sendMenuAction('force-reload') },
-        { label: 'Find in Service…', accelerator: 'CmdOrCtrl+F', click: () => sendMenuAction('find') },
-        { label: 'Find in All Services…', accelerator: 'CmdOrCtrl+Shift+F', click: () => sendMenuAction('find-all') },
-        { label: 'Unindexed Conversations', accelerator: 'CmdOrCtrl+Shift+U', click: () => sendMenuAction('queue') },
-        { label: 'Send Prompt to All Services…', accelerator: 'CmdOrCtrl+Shift+Enter', click: () => sendMenuAction('broadcast') },
-        { type: 'separator' },
-        { label: 'Downloads', accelerator: 'CmdOrCtrl+J', click: () => sendMenuAction('downloads') },
-        { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => sendMenuAction('settings') },
-        { type: 'separator' },
-        { label: 'Zoom In', accelerator: 'CmdOrCtrl+Plus', click: () => sendMenuAction('zoom-in') },
-        { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', click: () => sendMenuAction('zoom-out') },
-        { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: () => sendMenuAction('zoom-reset') },
-        { type: 'separator' },
-        { role: 'togglefullscreen' }
-      ]
+      submenu: viewItems
     },
     { role: 'windowMenu' },
     {
       role: 'help',
-      submenu: [
-        { label: 'Check for Updates…', click: () => checkForUpdates(true) },
-        { label: 'Report an Issue…', click: () => openExternalSafe(ISSUES_URL) }
-      ]
+      submenu: helpItems
     }
   ];
 
@@ -1182,8 +1238,16 @@ function wireIpc(): void {
 
   ipcMain.handle(
     IPC_CHANNELS.broadcastPrompt,
-    (_event, text: string, submit: boolean, tabIds?: string[]) =>
-      broadcastPrompt(state.tabs, text, Boolean(submit), tabIds)
+    (_event, text: string, submit: boolean, tabIds?: string[], newChat?: boolean) => {
+      const originalTabId = state.activeTabId;
+      return broadcastPrompt(state.tabs, text, Boolean(submit), tabIds, newChat !== false, {
+        // Submitting needs a visible, focused guest: several services ignore a
+        // click while their tab is hidden. Insert-only runs stay in the
+        // background and never switch tabs.
+        activate: (tabId) => setActiveTab(tabId),
+        originalTabId
+      });
+    }
   );
 
   ipcMain.handle(
@@ -1210,6 +1274,12 @@ function wireIpc(): void {
         sendToRenderer(IPC_CHANNELS.googleSignInDone, { copied, signedIn });
       })();
     }
+    if (next.syncEnabled && next.syncFolder
+      && (!previous.syncEnabled || previous.syncFolder !== next.syncFolder)) {
+      void historySync?.syncNow();
+    } else if (previous.syncEnabled !== next.syncEnabled || previous.syncFolder !== next.syncFolder) {
+      sendToRenderer(IPC_CHANNELS.syncStatus, historySync!.getStatus());
+    }
     return next;
   });
 
@@ -1225,6 +1295,84 @@ function wireIpc(): void {
     const next = savePreferences({ downloadDirectory: directory });
     broadcastPreferences(next);
     return next.downloadDirectory;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.getSyncStatus, async () => {
+    await historyStore.load();
+    return historySync!.getStatus();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.getSyncFolders, () => detectSyncFolders());
+
+  ipcMain.handle(IPC_CHANNELS.chooseSyncFolder, async () => {
+    const suggested = getPreferences().syncFolder || detectSyncFolders()[0]?.path;
+    const options: Electron.OpenDialogOptions = {
+      title: 'Choose a folder your cloud app synchronizes',
+      defaultPath: suggested,
+      buttonLabel: 'Use this folder',
+      properties: ['openDirectory', 'createDirectory']
+    };
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options);
+    const directory = result.filePaths[0];
+    if (result.canceled || !directory) return '';
+
+    const next = savePreferences({ syncFolder: directory, syncEnabled: true });
+    broadcastPreferences(next);
+    void historySync!.syncNow();
+    return directory;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.openSyncFolder, async () => {
+    const folder = getPreferences().syncFolder;
+    if (!folder) return;
+    try { fs.mkdirSync(folder, { recursive: true }); } catch { /* non-fatal */ }
+    await shell.openPath(folder);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.syncHistoryNow, async () => {
+    await historyStore.load();
+    return historySync!.syncNow();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.exportHistory, async () => {
+    await historyStore.load();
+    const stamp = new Date().toISOString().slice(0, 10);
+    const options: Electron.SaveDialogOptions = {
+      title: 'Export the local history index',
+      defaultPath: path.join(app.getPath('downloads'), `allai-history-${stamp}.json`),
+      filters: [{ name: 'ALLAI-CHAT history', extensions: ['json'] }]
+    };
+    const result = mainWindow
+      ? await dialog.showSaveDialog(mainWindow, options)
+      : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) return { canceled: true, entries: 0 };
+    await historySync!.exportTo(result.filePath);
+    const stats = historyStore.stats();
+    return { canceled: false, path: result.filePath, entries: stats.entries };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.importHistory, async () => {
+    await historyStore.load();
+    const options: Electron.OpenDialogOptions = {
+      title: 'Import a history export',
+      filters: [{ name: 'ALLAI-CHAT history', extensions: ['json'] }],
+      properties: ['openFile']
+    };
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options);
+    const file = result.filePaths[0];
+    if (result.canceled || !file) {
+      return {
+        canceled: true, summary: '', imported: 0, upgraded: 0,
+        tombstoned: 0, noTab: 0, unchanged: 0
+      };
+    }
+    const merge = await historySync!.importFrom(file);
+    if (getPreferences().syncEnabled) historySync!.schedule(1000);
+    return { canceled: false, summary: describeSyncMerge(merge), ...merge };
   });
 
   ipcMain.handle(IPC_CHANNELS.openGoogleSignIn, () => {
@@ -1337,10 +1485,12 @@ function wireIpc(): void {
 
   ipcMain.handle(IPC_CHANNELS.forgetHistoryEntry, (_event, id: string) => {
     if (typeof id === 'string' && id.length > 0) historyStore.removeById(id);
+    if (getPreferences().syncEnabled) historySync?.schedule(2000);
   });
 
   ipcMain.handle(IPC_CHANNELS.clearHistory, async () => {
     await historyStore.clear();
+    if (getPreferences().syncEnabled) historySync?.schedule(1000);
   });
 
   ipcMain.handle(IPC_CHANNELS.getDownloads, () => downloadManager.list());
@@ -1410,6 +1560,8 @@ app.whenReady().then(() => {
   loadPreferences();
   loadState();
   void historyStore.load();
+  historySync!.init();
+  historySync!.start();
   configurePartition(GOOGLE_SIGNIN_PARTITION);
   for (const tab of state.tabs) configurePartition(tab.partition);
 
@@ -1438,6 +1590,7 @@ app.whenReady().then(() => {
 app.on('before-quit', () => {
   historyReconciler.stop();
   historyBackfill.stop();
+  historySync?.stop();
   historyStore.flushSync();
 });
 

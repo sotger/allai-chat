@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react';
 import { UI_FONT_SIZES } from '@shared/preferences';
+import type { DetectedSyncFolder } from '@shared/sync';
 import type { ThemePreference } from '@shared/types';
 import { useAppStore } from '../store';
 
@@ -28,6 +30,20 @@ export function SettingsDialog() {
   const setIndexConfirmOpen = useAppStore((s) => s.setIndexConfirmOpen);
   const stopHistoryIndex = useAppStore((s) => s.stopHistoryIndex);
   const clearHistory = useAppStore((s) => s.clearHistory);
+  const syncStatus = useAppStore((s) => s.syncStatus);
+  const chooseSyncFolder = useAppStore((s) => s.chooseSyncFolder);
+  const openSyncFolder = useAppStore((s) => s.openSyncFolder);
+  const syncHistoryNow = useAppStore((s) => s.syncHistoryNow);
+  const exportHistory = useAppStore((s) => s.exportHistory);
+  const importHistory = useAppStore((s) => s.importHistory);
+  const isBusy = useAppStore((s) => s.isBusy);
+
+  const [syncFolders, setSyncFolders] = useState<DetectedSyncFolder[]>([]);
+
+  useEffect(() => {
+    if (!open) return;
+    void window.allai.getSyncFolders().then(setSyncFolders).catch(() => setSyncFolders([]));
+  }, [open]);
 
   if (!open) return null;
 
@@ -142,6 +158,103 @@ export function SettingsDialog() {
             {historyStats.withText > 0 ? `, ${historyStats.withText.toLocaleString()} with full text` : ''}
             {historyStats.withoutText > 0 ? `, ${historyStats.withoutText.toLocaleString()} still waiting in the queue` : ''}
             {historyStats.characters > 0 ? `, ${Math.max(1, Math.round(historyStats.characters / 1024)).toLocaleString()} KB` : ''}.
+          </p>
+        </section>
+
+        <section className="settings-section">
+          <h3>Sync &amp; backup</h3>
+          <p className="muted">
+            Write a portable copy of the search index into a folder your cloud client already
+            syncs — iCloud Drive, Google Drive, OneDrive, Dropbox, Nextcloud or a network share.
+            Each device keeps its own file and merges the others; no account, OAuth or API key is
+            involved.
+          </p>
+          <label className="settings-check">
+            <input
+              type="checkbox"
+              checked={preferences.syncEnabled}
+              disabled={!preferences.syncFolder}
+              onChange={(event) => void updatePreferences({ syncEnabled: event.target.checked })}
+            />
+            <span>
+              Keep a synced copy in this folder
+              <span className="settings-help">
+                The app writes allai-history-&lt;device&gt;.json after changes and merges files
+                from your other computers. Your cloud app does the upload; nothing is sent by
+                ALLAI-CHAT itself.
+              </span>
+            </span>
+          </label>
+          <div className="settings-row">
+            <input
+              className="settings-path"
+              value={preferences.syncFolder || 'No folder selected'}
+              readOnly
+              title={preferences.syncFolder || undefined}
+            />
+            <button className="secondary-button" onClick={() => void chooseSyncFolder()} disabled={isBusy}>
+              {preferences.syncFolder ? 'Change…' : 'Choose…'}
+            </button>
+          </div>
+          {syncFolders.length > 0 && (
+            <div className="settings-row sync-suggestions">
+              {syncFolders.slice(0, 6).map((folder) => {
+                const active = preferences.syncFolder === folder.path;
+                return (
+                  <button
+                    key={folder.path}
+                    className={`secondary-button ${active ? 'active' : ''}`}
+                    title={folder.path}
+                    onClick={() => {
+                      if (active) {
+                        if (preferences.syncEnabled) void syncHistoryNow();
+                        return;
+                      }
+                      void updatePreferences({ syncFolder: folder.path, syncEnabled: true })
+                        .then(() => syncHistoryNow());
+                    }}
+                  >
+                    {active ? '\u2713 ' : ''}
+                    {folder.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <div className="settings-row">
+            <button
+              className="secondary-button"
+              onClick={() => void syncHistoryNow()}
+              disabled={!preferences.syncFolder || !preferences.syncEnabled || isBusy}
+            >
+              Sync now
+            </button>
+            <button
+              className="secondary-button"
+              onClick={() => void openSyncFolder()}
+              disabled={!preferences.syncFolder}
+            >
+              Open folder
+            </button>
+            <button className="secondary-button" onClick={() => void exportHistory()}>
+              Export…
+            </button>
+            <button className="secondary-button" onClick={() => void importHistory()}>
+              Import…
+            </button>
+          </div>
+          <p className="muted settings-hint">
+            {syncStatus?.lastError
+              ? `Last sync failed: ${syncStatus.lastError}`
+              : syncStatus?.lastSyncAt
+                ? `Last sync ${new Date(syncStatus.lastSyncAt).toLocaleString()}`
+                  + `${syncStatus.files > 1 ? `, ${syncStatus.files} devices` : ', this device only'}`
+                  + `${syncStatus.summary ? ` — ${syncStatus.summary}` : ''}.`
+                : 'Not synced yet. Export… works without a cloud folder.'}
+          </p>
+          <p className="muted settings-hint">
+            Conversations are matched to a tab by service, then by label. Give duplicate
+            service tabs different names (double-click a tab) to keep them separate.
           </p>
         </section>
 

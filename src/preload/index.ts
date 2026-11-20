@@ -1,8 +1,9 @@
 import type { IpcRendererEvent } from 'electron';
 import { contextBridge, ipcRenderer } from 'electron';
 
-import { IPC_CHANNELS, type AllaiApi, type DownloadRecord, type GoogleSignInResult, type MenuAction } from '@shared/ipc';
+import { IPC_CHANNELS, type AllaiApi, type DownloadRecord, type GoogleSignInResult, type MenuAction, type UpdateStatus } from '@shared/ipc';
 import type { HistoryProgress, HistoryReport } from '@shared/history';
+import type { SyncStatus } from '@shared/sync';
 import type { AppState, Preferences } from '@shared/types';
 
 function subscribe<T>(channel: string, listener: (payload: T) => void): () => void {
@@ -27,10 +28,17 @@ const api: AllaiApi = {
   openSearchResult: (tabId, query, inList) => ipcRenderer.invoke(IPC_CHANNELS.openSearchResult, tabId, query, inList),
   findInPage: (tabId, query, options) => ipcRenderer.invoke(IPC_CHANNELS.findInPage, tabId, query, options),
   stopAllFind: () => ipcRenderer.invoke(IPC_CHANNELS.stopAllFind),
-  broadcastPrompt: (text, submit, tabIds) => ipcRenderer.invoke(IPC_CHANNELS.broadcastPrompt, text, submit, tabIds),
+  broadcastPrompt: (text, submit, tabIds, newChat) => ipcRenderer.invoke(IPC_CHANNELS.broadcastPrompt, text, submit, tabIds, newChat),
   getPreferences: () => ipcRenderer.invoke(IPC_CHANNELS.getPreferences),
   updatePreferences: (patch) => ipcRenderer.invoke(IPC_CHANNELS.updatePreferences, patch),
   chooseDownloadDirectory: () => ipcRenderer.invoke(IPC_CHANNELS.chooseDownloadDirectory),
+  getSyncStatus: () => ipcRenderer.invoke(IPC_CHANNELS.getSyncStatus),
+  getSyncFolders: () => ipcRenderer.invoke(IPC_CHANNELS.getSyncFolders),
+  chooseSyncFolder: () => ipcRenderer.invoke(IPC_CHANNELS.chooseSyncFolder),
+  openSyncFolder: () => ipcRenderer.invoke(IPC_CHANNELS.openSyncFolder),
+  syncHistoryNow: () => ipcRenderer.invoke(IPC_CHANNELS.syncHistoryNow),
+  exportHistory: () => ipcRenderer.invoke(IPC_CHANNELS.exportHistory),
+  importHistory: () => ipcRenderer.invoke(IPC_CHANNELS.importHistory),
   openGoogleSignIn: () => ipcRenderer.invoke(IPC_CHANNELS.openGoogleSignIn),
   syncGoogleSignIn: () => ipcRenderer.invoke(IPC_CHANNELS.syncGoogleSignIn),
   getDownloads: () => ipcRenderer.invoke(IPC_CHANNELS.getDownloads),
@@ -56,7 +64,9 @@ const api: AllaiApi = {
   onGoogleSignInDone: (listener) => subscribe<GoogleSignInResult>(IPC_CHANNELS.googleSignInDone, listener),
   onHistoryProgress: (listener) => subscribe<HistoryProgress>(IPC_CHANNELS.historyProgress, listener),
   onHistoryReport: (listener) => subscribe<HistoryReport>(IPC_CHANNELS.historyReport, listener),
-  onHistoryUpdated: (listener) => subscribe<unknown>(IPC_CHANNELS.historyUpdated, () => listener())
+  onHistoryUpdated: (listener) => subscribe<unknown>(IPC_CHANNELS.historyUpdated, () => listener()),
+  onSyncStatus: (listener) => subscribe<SyncStatus>(IPC_CHANNELS.syncStatus, listener),
+  onUpdateStatus: (listener) => subscribe<UpdateStatus>(IPC_CHANNELS.updateStatus, listener)
 };
 
 contextBridge.exposeInMainWorld('allai', api);

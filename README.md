@@ -77,16 +77,25 @@ is still waiting to be read.
   grouped by service. Click a row to open it; once the text is captured the row
   disappears. The same panel shows live progress while indexing (left, saved,
   failed, current chat) and can **Refresh list** or start **Index queue**.
+- **Sync and backup the index** — **Settings → Sync & backup** writes a portable
+  JSON copy of the local index into a folder your cloud client already syncs
+  (iCloud Drive, Google Drive, OneDrive, Dropbox, Nextcloud, a network share).
+  Each computer keeps its own file and merges the others; there is no cloud
+  account, OAuth or API key. **Export…** produces one file you can move anywhere,
+  and **Import…** merges one back.
 - **Send a prompt to all services** — `Cmd/Ctrl+Shift+Enter` opens a small
-  composer that inserts the same prompt into every open service at once. It
-  inserts only by default; tick **Also press send** to submit without reviewing
-  each tab. Per-service results show what worked.
+  composer that starts a fresh conversation in every open service, then inserts
+  the same prompt into each one. Untick **Start a new chat first** to append to
+  the open conversation instead. It inserts only by default; tick **Also press
+  send** to submit without reviewing each tab. Per-service results show what
+  worked.
 - **Browser basics** — back / forward / reload, find in page, zoom, downloads,
   native context menu with Cut / Copy / Paste, camera and microphone support.
 - **Persistent workspace** — tabs, order, active tab, labels and window size are
   restored on the next launch.
-- **No telemetry** — no analytics, no accounts, no cloud sync. The app only
-  talks to the services you open and checks GitHub Releases for updates.
+- **No telemetry** — no analytics, no accounts and no backend. Cloud sync is an
+  optional file in a folder you choose; the app itself never uploads anything.
+  It only talks to the services you open and checks GitHub Releases for updates.
 
 Included services: ChatGPT, Claude, Gemini, Copilot, Perplexity, DeepSeek, Grok,
 HuggingChat, Kimi, ChatGLM, Mistral Vibe, Phind, Poe, plus any custom URL.
@@ -96,9 +105,9 @@ HuggingChat, Kimi, ChatGLM, Mistral Vibe, Phind, Poe, plus any custom URL.
 Prebuilt installers are published on the
 [Releases](https://github.com/sotger/allai-chat/releases/latest) page. Builds are
 currently unsigned (ad-hoc signed on macOS), so the OS may show a warning on
-first launch. Windows and Linux AppImage builds can update themselves; macOS
-updates become automatic after the app is signed with an Apple Developer ID
-(see [docs/SIGNING.md](docs/SIGNING.md)).
+first launch. Windows, Linux AppImage and macOS builds can update themselves; a
+Developer ID is still needed to remove the macOS Gatekeeper warning (see
+[docs/SIGNING.md](docs/SIGNING.md)).
 
 ### macOS (Apple Silicon and Intel)
 
@@ -147,10 +156,15 @@ Then start **ALLAI-CHAT** from your application menu, or run `allai-chat`.
 ### Updates
 
 - **Windows** and **Linux AppImage**: updates download in the background and
-  install on restart. You can also use **Help → Check for Updates…**.
-- **macOS**: automatic updates require a Developer ID signed build. Current
-  releases are ad-hoc signed, so **Check for Updates…** opens the Releases page.
-  See [docs/SIGNING.md](docs/SIGNING.md) for the one-time Apple setup.
+  install on restart. You can also use **Check for Updates…**.
+- **macOS**: **ALLAI-CHAT → Check for Updates…** works even though releases are
+  ad-hoc signed. The app asks GitHub for the latest release, downloads the
+  matching Intel or Apple Silicon zip, verifies its SHA-256 checksum, replaces
+  `/Applications/ALLAI-CHAT.app` after quitting and relaunches it. If the app is
+  not in a writable folder (for example it is still running from a mounted DMG),
+  the update falls back to the release page. A Developer ID signature is no
+  longer required for updates; it is still needed to remove the first-launch
+  Gatekeeper warning and for notarization.
 - **.deb**: install the newer package over the old one.
 
 Tabs and logins are preserved by updates. Set `ALLAI_DISABLE_AUTO_UPDATE=1`
@@ -287,21 +301,57 @@ a tab already wipes that service's profile.
 
 **Clear index** deletes the local file.
 
+#### Sync and backup
+
+**Settings → Sync & backup** can keep a copy of the index on several computers
+without a backend:
+
+- Choose a folder that your cloud client already synchronizes — iCloud Drive,
+  Google Drive, OneDrive, Dropbox, Nextcloud or a mounted network share. The app
+  shows the folders it can detect on macOS, Windows and Linux; each detected
+  cloud account gets its own button (two Google Drive accounts are labelled with
+  their addresses), the active one is checked, and another folder can be chosen
+  at any time with **Change…**.
+- The app writes `allai-history-<device>.json` there two minutes after a change,
+  every ten minutes and on launch. It also reads the other devices' files and
+  merges their conversations into the local index. Only the cloud client
+  transfers data; ALLAI-CHAT opens no network connection for this.
+- Entries are matched to a local tab by service, then by tab label, then by host.
+  If two tabs of the same service could match and neither label is unique, the
+  row is skipped rather than mixed between accounts. Give such tabs different
+  labels (double-click a tab to rename it).
+- **×** on a queue row and **Clear index** propagate to the other devices;
+  closing a service tab only drops that machine's copy.
+- **Export…** writes the same JSON file to a location of your choice. **Import…**
+  merges one back. Both work without enabling cloud sync.
+
+The file contains the captured conversation text, so treat the folder like the
+index itself. It is not encrypted by the app.
+
 ### Send a prompt to all services
 
 Press `Cmd/Ctrl+Shift+Enter` (or use **View → Send Prompt to All Services…**, or
 the **⇉** button in the top bar). Type the prompt once and confirm:
 
+- **Start a new chat first** (on by default) clicks each service's own "New
+  chat" control, or opens its known new-conversation address, before typing. The
+  prompt therefore never lands in the conversation that happened to be open.
+  Untick it to append to the open chat instead.
 - By default the text is **inserted** into every open service and nothing is
   sent. Review each tab and press Enter yourself.
 - Tick **Also press send** to submit immediately. The app clicks each service's
   send button, or presses Enter when no button can be identified.
-- The result list shows every service and whether the text was inserted.
+- The result list shows every service, whether a new chat was started, and
+  whether the text was inserted.
 
 Injection uses native input events, so React, ProseMirror and similar editors
 register it as normal typing. Background tabs are filled too — you do not have to
-switch between them. Services that block scripted input (or are still loading)
-are reported in the result list instead of failing silently.
+switch between them. **Sending** briefly makes each tab visible and focused,
+because several services ignore a click while their tab is in the background;
+the app returns to the tab you were on. The row reports a service that kept the
+text in the composer instead of claiming it was sent. Services that block
+scripted input (or are still loading) are reported in the result list instead of
+failing silently.
 
 | Shortcut | Action |
 | --- | --- |
@@ -338,17 +388,25 @@ reopening it means signing in again. This keeps stale credentials from piling up
 - “Reuse one Google sign-in” copies Google session cookies between local service
   profiles. It removes repeated password prompts, but it is still a shared
   session: leave it off if you want every tab to be completely independent.
-- macOS builds are ad-hoc signed; notarization and automatic macOS updates
-  require an Apple Developer ID (see [docs/SIGNING.md](docs/SIGNING.md)).
+- Cloud sync is file-based and last-write-wins per conversation. Two computers
+  editing the same chat at the same moment keep the richer/longer capture; a
+  deletion propagated from another device can win over an older copy. The file
+  is not encrypted by the app.
+- macOS builds are ad-hoc signed, so the first launch still needs right-click →
+  Open and the app is not notarized. Updates themselves no longer require a
+  Developer ID: the fallback updater replaces the bundle and verifies the
+  downloaded zip. See [docs/SIGNING.md](docs/SIGNING.md) for signing.
 
 ## Security and privacy
 
 ALLAI-CHAT is a local browser shell. It does not have a backend, an account
 system, telemetry, crash reporting or analytics. The search history index is a
-local file in the app's data folder; it is never uploaded and can be deleted from
-**Settings → History search → Clear index**. Network traffic comes from the
-AI websites you open, plus the update check against GitHub Releases (no
-identifiers are sent).
+local file in the app's data folder; it is never uploaded by the app and can be
+deleted from **Settings → History search → Clear index**. Cloud sync is opt-in
+and only writes a file into a folder you choose; your existing cloud client
+(iCloud Drive, Google Drive, OneDrive, Dropbox, …) performs the transfer. Network
+traffic comes from the AI websites you open, plus the update check against
+GitHub Releases (no identifiers are sent).
 
 What the app itself stores:
 

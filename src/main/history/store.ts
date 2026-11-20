@@ -14,9 +14,20 @@ import {
   type HistoryHit,
   type HistoryStats
 } from '@shared/history';
+import { syncKey, type SyncTombstone } from '@shared/sync';
 
 const COMPACT_RATIO = 1.5;
 const FLUSH_DELAY_MS = 250;
+const TOMBSTONE_FLUSH_DELAY_MS = 400;
+
+interface StoredTombstone extends SyncTombstone {
+  /**
+   * `false` for deletions that should stay on this machine (closing a service
+   * tab). They still block a re-import here, but are not written to the sync
+   * file, so another device's copy is not wiped.
+   */
+  propagate: boolean;
+}
 
 /**
  * Append-only JSONL store plus an in-memory index.
@@ -29,9 +40,14 @@ const FLUSH_DELAY_MS = 250;
 export class HistoryStore {
   private readonly directory: string;
   private readonly filePath: string;
+  private readonly tombstonePath: string;
   private readonly index = new HistoryIndex();
   private queue: string[] = [];
   private flushTimer: ReturnType<typeof setTimeout> | undefined;
+  private tombstoneTimer: ReturnType<typeof setTimeout> | undefined;
+  private tombstones = new Map<string, StoredTombstone>();
+  private clearedAt = 0;
+  private tombstonesDirty = false;
   private loaded = false;
   private loading: Promise<void> | undefined;
   private changeListener: (() => void) | undefined;
@@ -39,6 +55,7 @@ export class HistoryStore {
   constructor(userDataPath: string) {
     this.directory = path.join(userDataPath, 'history');
     this.filePath = path.join(this.directory, 'entries.jsonl');
+    this.tombstonePath = path.join(this.directory, 'tombstones.json');
   }
 
   /**
@@ -62,6 +79,7 @@ export class HistoryStore {
     if (this.loading) return this.loading;
 
     this.loading = (async () => {
+      await this.loadTombstones();
       let raw = '';
       try {
         raw = await fs.promises.readFile(this.filePath, 'utf-8');
@@ -77,8 +95,10 @@ export class HistoryStore {
         if (!line.trim()) continue;
         lines += 1;
         try {
-          const parsed = JSON.parse(line) as HistoryEntry & { deleted?: boolean };
+          const parsed = JSON.parse(line) as HistoryEntry & { deleted?: boolean; deletedAt?: number };
           if (parsed?.deleted === true && parsed.id) {
+            const doomed = byId.get(parsed.id);
+            if (doomed) this.rememberTombstone(doomed, parsed.deletedAt ?? Date.now(), false);
             byId.delete(parsed.id);
             continue;
           }
@@ -98,6 +118,12 @@ export class HistoryStore {
         } catch { /* skip a corrupted line, keep the rest */ }
       }
 
+      // A tombstone can be newer than the row it deleted (a sync from another
+      // device wrote the deletion while this file still had the old capture).
+      for (const [id, entry] of byId) {
+        if (this.isTombstoned(entry.providerId, entry.url, entry.capturedAt)) byId.delete(id);
+      }
+
       // Drop queued rows for chats that are already indexed under another URL
       // variant (a project chat has a short and a slugged address). Without
       // this, the queue keeps re-reading conversations it already has.
@@ -109,6 +135,7 @@ export class HistoryStore {
       if (pruned > 0 || dropped > 0 || (lines > 1000 && lines > byId.size * COMPACT_RATIO)) {
         await this.compact([...byId.values()]);
       }
+      this.flushTombstonesSync();
     })();
 
     return this.loading;
@@ -121,6 +148,150 @@ export class HistoryStore {
       const body = entries.map((entry) => JSON.stringify(entry)).join('\n');
       await fs.promises.writeFile(temp, body ? `${body}\n` : '', 'utf-8');
       await fs.promises.rename(temp, this.filePath);
+    } catch { /* non-fatal */ }
+  }
+
+  private async loadTombstones(): Promise<void> {
+    try {
+      const raw = await fs.promises.readFile(this.tombstonePath, 'utf-8');
+      const parsed = JSON.parse(raw) as {
+        version?: number;
+        clearedAt?: number;
+        tombstones?: StoredTombstone[];
+      };
+      if (typeof parsed.clearedAt === 'number' && Number.isFinite(parsed.clearedAt)) {
+        this.clearedAt = parsed.clearedAt;
+      }
+      if (!Array.isArray(parsed.tombstones)) return;
+      for (const item of parsed.tombstones) {
+        if (!item || typeof item.key !== 'string' || !item.key) continue;
+        if (typeof item.deletedAt !== 'number' || !Number.isFinite(item.deletedAt)) continue;
+        this.tombstones.set(item.key, {
+          key: item.key,
+          deletedAt: item.deletedAt,
+          propagate: item.propagate === true
+        });
+      }
+    } catch { /* first launch or a damaged file */ }
+  }
+
+  private recordTombstone(key: string, deletedAt: number, propagate: boolean): void {
+    const existing = this.tombstones.get(key);
+    const next: StoredTombstone = {
+      key,
+      deletedAt: Math.max(existing?.deletedAt ?? 0, deletedAt),
+      propagate: (existing?.propagate ?? false) || propagate
+    };
+    if (existing && existing.deletedAt === next.deletedAt && existing.propagate === next.propagate) return;
+    this.tombstones.set(key, next);
+    this.tombstonesDirty = true;
+    if (this.loaded) this.scheduleTombstoneFlush();
+  }
+
+  /** Records a deletion so a sync file from another device cannot undo it. */
+  private rememberTombstone(entry: HistoryEntry, deletedAt: number, propagate: boolean): void {
+    this.recordTombstone(syncKey(entry.providerId, entry.url), Math.max(deletedAt, entry.capturedAt), propagate);
+  }
+
+  /** True when this conversation was deleted on this device after `capturedAt`. */
+  isTombstoned(providerId: string, url: string, capturedAt: number): boolean {
+    if (this.clearedAt > 0 && this.clearedAt >= capturedAt) return true;
+    const item = this.tombstones.get(syncKey(providerId, url));
+    return Boolean(item && item.deletedAt >= capturedAt);
+  }
+
+  /** Timestamp of the last "Clear index", for sync files. */
+  getClearedAt(): number {
+    return this.clearedAt;
+  }
+
+  /**
+   * Applies a "Clear index" that happened on another device: everything
+   * captured before that moment is gone, newer local captures survive.
+   */
+  async applyRemoteClear(clearedAt: number): Promise<number> {
+    if (!Number.isFinite(clearedAt) || clearedAt <= this.clearedAt) return 0;
+    this.clearedAt = clearedAt;
+    this.tombstonesDirty = true;
+
+    let removed = 0;
+    for (const entry of this.index.all()) {
+      if (entry.capturedAt > clearedAt) continue;
+      this.index.remove(entry.id);
+      removed += 1;
+    }
+
+    if (removed > 0) {
+      this.flushSync();
+      await this.compact(this.index.all());
+      this.changed();
+    } else {
+      this.flushTombstonesSync();
+    }
+    return removed;
+  }
+
+  /** Deletions that are safe to write into a shared sync file. */
+  tombstonesForSync(): SyncTombstone[] {
+    return [...this.tombstones.values()]
+      .filter((item) => item.propagate)
+      .map(({ key, deletedAt }) => ({ key, deletedAt }));
+  }
+
+  /**
+   * Applies deletions that arrived from another device. A row that was
+   * captured after the deletion (re-opened locally) is kept.
+   */
+  async applyRemoteTombstones(items: readonly SyncTombstone[]): Promise<number> {
+    const byKey = new Map<string, HistoryEntry[]>();
+    for (const entry of this.index.all()) {
+      const key = syncKey(entry.providerId, entry.url);
+      const list = byKey.get(key);
+      if (list) list.push(entry);
+      else byKey.set(key, [entry]);
+    }
+
+    let removed = 0;
+    for (const item of items) {
+      if (!item?.key || typeof item.deletedAt !== 'number') continue;
+      this.recordTombstone(item.key, item.deletedAt, true);
+      const local = this.tombstones.get(item.key);
+      if (!local || local.deletedAt < item.deletedAt) continue;
+      for (const entry of byKey.get(item.key) ?? []) {
+        if (entry.capturedAt > item.deletedAt) continue;
+        if (!this.index.get(entry.id)) continue;
+        this.index.remove(entry.id);
+        removed += 1;
+      }
+    }
+
+    if (removed > 0) {
+      this.flushSync();
+      await this.compact(this.index.all());
+      this.changed();
+    }
+    return removed;
+  }
+
+  private scheduleTombstoneFlush(): void {
+    if (this.tombstoneTimer) return;
+    this.tombstoneTimer = setTimeout(() => {
+      this.tombstoneTimer = undefined;
+      this.flushTombstonesSync();
+    }, TOMBSTONE_FLUSH_DELAY_MS);
+  }
+
+  private flushTombstonesSync(): void {
+    if (!this.tombstonesDirty) return;
+    try {
+      fs.mkdirSync(this.directory, { recursive: true });
+      const body = JSON.stringify({
+        version: 1,
+        clearedAt: this.clearedAt,
+        tombstones: [...this.tombstones.values()]
+      });
+      fs.writeFileSync(this.tombstonePath, body, 'utf-8');
+      this.tombstonesDirty = false;
     } catch { /* non-fatal */ }
   }
 
@@ -216,6 +387,11 @@ export class HistoryStore {
       clearTimeout(this.flushTimer);
       this.flushTimer = undefined;
     }
+    if (this.tombstoneTimer) {
+      clearTimeout(this.tombstoneTimer);
+      this.tombstoneTimer = undefined;
+    }
+    this.flushTombstonesSync();
     if (this.queue.length === 0) return;
     const lines = this.queue.join('\n');
     this.queue = [];
@@ -257,8 +433,10 @@ export class HistoryStore {
    * never renders text) does not reappear on the next launch.
    */
   removeById(id: string): void {
-    if (!this.index.get(id)) return;
+    const existing = this.index.get(id);
+    if (!existing) return;
     this.index.remove(id);
+    this.rememberTombstone(existing, Date.now(), true);
     this.queue.push(JSON.stringify({ id, deleted: true, deletedAt: Date.now() }));
     this.scheduleFlush();
     this.changed();
@@ -269,13 +447,21 @@ export class HistoryStore {
     const doomed = this.index.all().filter((entry) => entry.tabId === tabId);
     if (doomed.length === 0) return;
     this.flushSync();
+    // The deletion stays local: the same conversation may belong to a different
+    // tab on another device, and closing a tab here must not wipe that copy.
+    for (const entry of doomed) this.rememberTombstone(entry, Date.now(), false);
     for (const entry of doomed) this.index.remove(entry.id);
     await this.compact(this.index.all());
+    this.flushSync();
     this.changed();
   }
 
   async clear(): Promise<void> {
-    this.index.all().forEach((entry) => this.index.remove(entry.id));
+    this.clearedAt = Date.now();
+    this.tombstonesDirty = true;
+    const doomed = this.index.all();
+    for (const entry of doomed) this.rememberTombstone(entry, this.clearedAt, true);
+    doomed.forEach((entry) => this.index.remove(entry.id));
     this.queue = [];
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
@@ -284,6 +470,9 @@ export class HistoryStore {
     try {
       await fs.promises.rm(this.filePath, { force: true });
     } catch { /* non-fatal */ }
+    // Write tombstones before the caller syncs, so a cloud copy cannot restore
+    // what was just cleared.
+    this.flushSync();
     this.changed();
   }
 }

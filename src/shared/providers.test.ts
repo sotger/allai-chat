@@ -19,6 +19,14 @@ describe('provider configs', () => {
     }
   });
 
+  it('every built-in provider has an https new-chat address', () => {
+    for (const id of [...PROVIDER_LIST, ...RETIRED_PROVIDER_LIST]) {
+      if (id === 'custom') continue;
+      expect(PROVIDER_CONFIGS[id].newChatUrl).toMatch(/^https:\/\//);
+    }
+    expect(PROVIDER_CONFIGS.claude.newChatUrl).toBe('https://claude.ai/new');
+  });
+
   it('the provider list covers every offered or retired provider', () => {
     expect(new Set([...PROVIDER_LIST, ...RETIRED_PROVIDER_LIST])).toEqual(new Set(Object.keys(PROVIDER_CONFIGS)));
   });

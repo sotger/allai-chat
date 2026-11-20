@@ -77,6 +77,27 @@ export default function App() {
     void store.refreshHistoryStats().catch(() => undefined);
   }), []);
 
+  useEffect(() => window.allai.onSyncStatus((status) => {
+    const store = useAppStore.getState();
+    store.setSyncStatus(status);
+    void store.refreshHistoryStats().catch(() => undefined);
+    void store.refreshHistoryQueue().catch(() => undefined);
+    if (status.lastError) store.setNotice(`Cloud sync: ${status.lastError}`);
+  }), []);
+
+  useEffect(() => window.allai.onUpdateStatus((status) => {
+    const store = useAppStore.getState();
+    if (status.state === 'available') {
+      store.setNotice(`ALLAI-CHAT ${status.version} is available.`);
+    } else if (status.state === 'downloading') {
+      store.setNotice(`Downloading ALLAI-CHAT ${status.version}… ${status.percent ?? 0}%`);
+    } else if (status.state === 'downloaded') {
+      store.setNotice(`ALLAI-CHAT ${status.version} is ready. Choose "Restart and Install".`);
+    } else if (status.state === 'error') {
+      store.setNotice(status.message ?? 'Update failed.');
+    }
+  }), []);
+
   const indexingRunning = useAppStore((state) => state.historyProgress.running);
   const indexingFinishedAt = useAppStore((state) => state.historyProgress.finishedAt);
 

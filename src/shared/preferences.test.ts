@@ -10,7 +10,9 @@ describe('normalizePreferences', () => {
       reuseGoogleSignIn: true,
       uiFontSize: 13,
       historyIndexEnabled: true,
-      historyBackfillEnabled: false
+      historyBackfillEnabled: false,
+      syncFolder: '',
+      syncEnabled: false
     });
   });
 
@@ -21,14 +23,18 @@ describe('normalizePreferences', () => {
       reuseGoogleSignIn: false,
       uiFontSize: 15,
       historyIndexEnabled: false,
-      historyBackfillEnabled: true
+      historyBackfillEnabled: true,
+      syncFolder: '/Users/me/iCloud/ALLAI-CHAT',
+      syncEnabled: true
     }, '/home/user/Downloads')).toEqual({
       theme: 'dark',
       downloadDirectory: '/tmp/files',
       reuseGoogleSignIn: false,
       uiFontSize: 15,
       historyIndexEnabled: false,
-      historyBackfillEnabled: true
+      historyBackfillEnabled: true,
+      syncFolder: '/Users/me/iCloud/ALLAI-CHAT',
+      syncEnabled: true
     });
   });
 
@@ -43,7 +49,9 @@ describe('normalizePreferences', () => {
       reuseGoogleSignIn: true,
       uiFontSize: 13,
       historyIndexEnabled: true,
-      historyBackfillEnabled: false
+      historyBackfillEnabled: false,
+      syncFolder: '',
+      syncEnabled: false
     });
   });
 

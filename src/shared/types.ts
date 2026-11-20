@@ -21,6 +21,11 @@ export interface ProviderConfig {
   url: string;
   color: string;
   icon: string;
+  /**
+   * Address that starts an empty conversation. Used as a fallback when the
+   * page has no clickable "New chat" control (custom services have none).
+   */
+  newChatUrl?: string;
 }
 
 /** One vertical tab: an isolated session running a single AI service. */
@@ -71,4 +76,12 @@ export interface Preferences {
    * walks older conversations at a human pace, so it is opt-in.
    */
   historyBackfillEnabled: boolean;
+  /**
+   * Folder that a cloud client already syncs (iCloud Drive, Google Drive,
+   * OneDrive, Dropbox, Nextcloud, a network share). The app writes one portable
+   * file per device there; it never talks to a cloud API.
+   */
+  syncFolder: string;
+  /** Write/merge the sync file automatically in `syncFolder`. */
+  syncEnabled: boolean;
 }

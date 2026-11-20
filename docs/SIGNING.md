@@ -1,12 +1,13 @@
 # Signing, notarization and auto-updates
 
 ALLAI-CHAT currently ships **ad-hoc signed** macOS builds. They run after the
-usual Gatekeeper bypass (right-click → Open), but macOS will not install
-automatic updates for them, and users still see a “developer cannot be verified”
-warning on first launch.
+usual Gatekeeper bypass (right-click → Open), and the app updates them through a
+GitHub-API fallback (see section 5) because Squirrel.Mac cannot install into an
+unsigned bundle. Users still see a “developer cannot be verified” warning on
+first launch, and the app is not notarized.
 
-To remove the warning and enable macOS auto-updates you need an **Apple
-Developer Program** membership and a **Developer ID Application** certificate.
+To remove the warning and use the standard updater you need an **Apple Developer
+Program** membership and a **Developer ID Application** certificate.
 
 ## What you need
 
@@ -83,21 +84,32 @@ xcrun stapler validate "/Applications/ALLAI-CHAT.app"      # The validate action
 
 ## 5. Auto-updates
 
-The app uses `electron-updater` against GitHub Releases. The release workflow
-builds and uploads:
+The app uses `electron-updater` against GitHub Releases on Windows and Linux,
+and a small GitHub-API fallback on macOS because Squirrel.Mac refuses to install
+an update into an ad-hoc signed bundle.
 
-- `latest-mac.yml` + `*.zip` (macOS, both architectures; the updater picks the
-  matching zip automatically),
+The release workflow still uploads:
+
+- `latest-mac.yml` + `*.zip` (macOS, both architectures),
 - `latest.yml` + `*.exe` (Windows NSIS),
 - `latest-linux.yml` + `*.AppImage` (Linux).
 
 Behaviour:
 
 - **Windows / Linux AppImage:** updates are downloaded in the background and
-  installed on restart (or via **Help → Check for Updates…**).
-- **macOS:** auto-update requires a Developer ID signature. On an unsigned
-  build the same menu item explains this and opens the Releases page. Once a
-  signed build is installed, subsequent releases update automatically.
+  installed on restart (or via **Check for Updates…**).
+- **macOS (ad-hoc signed, current releases):** **ALLAI-CHAT → Check for
+  Updates…** asks the GitHub API for the latest release, picks
+  `ALLAI-CHAT-<version>-<arch>.zip`, verifies the asset's SHA-256 digest,
+  unpacks it with `ditto` and replaces the running `.app` after the process
+  exits, then relaunches it. The bundle must be in a writable folder; from a
+  mounted DMG or an App Translocation path the app falls back to opening the
+  release page. A transient launch check asks once per version; "Later" is
+  remembered in `updates.json` in the app data folder.
+- **macOS (Developer ID signed):** `electron-updater`/Squirrel.Mac is used
+  instead, exactly like the Windows path. Signing is still required to remove
+  the first-launch Gatekeeper warning and for notarization, but no longer for
+  updates.
 - **Linux .deb:** no self-update; install the new package.
 
 After the first signed release, macOS auto-updates work with no additional
