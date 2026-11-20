@@ -15,8 +15,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          - os: macos-15-intel
             name: macos
+            # macOS 14 was retired on 2026-11-02. The Intel image is a standard
+            # x64 host and cross-builds the arm64 app with electron-builder.
             args: --mac --x64 --arm64
           - os: windows-latest
             name: windows
