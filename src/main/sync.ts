@@ -42,7 +42,9 @@ export class HistorySync {
     folder: '',
     deviceId: '',
     deviceName: '',
-    files: 0
+    files: 0,
+    unread: 0,
+    unreadFiles: []
   };
 
   constructor(
@@ -166,15 +168,26 @@ export class HistorySync {
         throw new Error(`Cannot read the sync folder: ${messageOf(error)}`);
       }
 
+      // A file that cannot be parsed yet (still uploading, not downloaded from
+      // the cloud, or damaged) must not look like "nothing to merge": the
+      // settings line reports it and the next pass retries.
+      const unreadFiles: string[] = [];
       const ownName = syncFileName(this.deviceId);
       for (const name of names) {
         if (name === ownName) continue;
         files += 1;
-        let file: HistorySyncFile | undefined;
+        let raw: string;
         try {
-          file = parseSyncFile(await fsp.readFile(path.join(folder, name), 'utf-8'));
-        } catch { /* a cloud placeholder or a partially uploaded file */ }
-        if (!file) continue;
+          raw = await fsp.readFile(path.join(folder, name), 'utf-8');
+        } catch {
+          unreadFiles.push(name);
+          continue;
+        }
+        const file = parseSyncFile(raw);
+        if (!file) {
+          unreadFiles.push(name);
+          continue;
+        }
         if (file.deviceId === this.deviceId) continue;
         await this.mergeFile(file, merge);
       }
@@ -189,10 +202,12 @@ export class HistorySync {
         enabled: true,
         folder,
         files: Math.max(files, 1),
+        unread: unreadFiles.length,
+        unreadFiles,
         lastSyncAt: Date.now(),
         lastError: undefined,
         lastMerge: merge,
-        summary: describeSyncMerge(merge)
+        summary: describeSyncMerge(merge, unreadFiles.length)
       };
       this.publish();
       return this.getStatus();

@@ -66,6 +66,14 @@ export interface SyncStatus {
   lastError?: string;
   /** Number of sync files in the folder, including this device's own. */
   files: number;
+  /**
+   * Other devices' files that could not be read on this pass: still uploading,
+   * not downloaded from the cloud yet, or damaged. They are retried on the next
+   * pass; the status line must not claim "up to date" while any remain.
+   */
+  unread: number;
+  /** File names behind `unread`, for the settings line. */
+  unreadFiles: string[];
   /** Result of the last merge (imports + upgrades + skips). */
   lastMerge?: SyncMergeResult;
   /** Human summary of the last merge, for the settings line. */
@@ -189,11 +197,12 @@ export function parseSyncFile(raw: string | Buffer): HistorySyncFile | undefined
 }
 
 /** A human label for the sync status line ("1,204 chats from 2 devices"). */
-export function describeSyncMerge(result: SyncMergeResult): string {
+export function describeSyncMerge(result: SyncMergeResult, unread = 0): string {
   const parts: string[] = [];
   if (result.imported > 0) parts.push(`${result.imported} new`);
   if (result.upgraded > 0) parts.push(`${result.upgraded} updated`);
   if (result.tombstoned > 0) parts.push(`${result.tombstoned} deleted elsewhere`);
+  if (unread > 0) parts.push(`${unread} file${unread === 1 ? '' : 's'} not read yet`);
   if (result.noTab > 0) parts.push(`${result.noTab} without a matching tab`);
   if (parts.length === 0) return 'Already up to date';
   return parts.join(', ');

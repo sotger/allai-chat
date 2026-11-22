@@ -315,7 +315,9 @@ without a backend:
 - The app writes `allai-history-<device>.json` there two minutes after a change,
   every ten minutes and on launch. It also reads the other devices' files and
   merges their conversations into the local index. Only the cloud client
-  transfers data; ALLAI-CHAT opens no network connection for this.
+  transfers data; ALLAI-CHAT opens no network connection for this. A file that
+  is still uploading, not downloaded yet or damaged is counted and named in the
+  settings line, and the next sync retries it.
 - **Change…** writes a fresh snapshot into the newly chosen folder immediately.
   If the JSON file is deleted or moved, the next sync recreates it.
 - Entries are matched to a local tab by service, then by tab label, then by host.

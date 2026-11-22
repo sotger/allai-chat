@@ -100,6 +100,16 @@ describe('sync file', () => {
       .toBe('Already up to date');
   });
 
+  it('never claims "up to date" while a file is unread', () => {
+    const idle: SyncMergeResult = {
+      imported: 0, upgraded: 0, tombstoned: 0, noTab: 0, unchanged: 9
+    };
+    expect(describeSyncMerge(idle, 1)).toBe('1 file not read yet');
+    expect(describeSyncMerge(idle, 2)).toBe('2 files not read yet');
+    expect(describeSyncMerge({ ...idle, imported: 3, noTab: 4 }, 1))
+      .toBe('3 new, 1 file not read yet, 4 without a matching tab');
+  });
+
   it('keys conversations by provider and canonical url', () => {
     expect(syncKey('chatgpt', 'https://chatgpt.com/c/x/?utm=1#top'))
       .toBe('chatgpt:https://chatgpt.com/c/x');

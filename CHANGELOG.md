@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.8.1 — 2026-11-23
+
+### Fixed
+
+- **Sync no longer claims "Already up to date" while another device's file was
+  skipped.** A file that is still uploading, not downloaded from the cloud yet,
+  or damaged is now counted and named in **Settings → Sync & backup** instead of
+  disappearing silently. The next pass retries it, and the status line keeps
+  reporting it until it is read.
+
 ## 1.8.0 — 2026-11-20
 
 ### Added

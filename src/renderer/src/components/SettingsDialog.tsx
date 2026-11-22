@@ -252,6 +252,17 @@ export function SettingsDialog() {
                   + `${syncStatus.summary ? ` — ${syncStatus.summary}` : ''}.`
                 : 'Not synced yet. Export… works without a cloud folder.'}
           </p>
+          {(syncStatus?.unreadFiles?.length ?? 0) > 0 && (
+            <p className="muted settings-hint" title={syncStatus?.unreadFiles?.join('\n')}>
+              Not read yet:{' '}
+              {syncStatus?.unreadFiles?.slice(0, 4).join(', ')}
+              {(syncStatus?.unreadFiles?.length ?? 0) > 4
+                ? ` and ${(syncStatus?.unreadFiles?.length ?? 0) - 4} more`
+                : ''}
+              . The file may still be uploading, not downloaded from the cloud, or damaged;
+              the app retries on the next sync.
+            </p>
+          )}
           <p className="muted settings-hint">
             Conversations are matched to a tab by service, then by label. Give duplicate
             service tabs different names (double-click a tab) to keep them separate.
