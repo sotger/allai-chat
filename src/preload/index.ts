@@ -1,7 +1,7 @@
 import type { IpcRendererEvent } from 'electron';
 import { contextBridge, ipcRenderer } from 'electron';
 
-import { IPC_CHANNELS, type AllaiApi, type DownloadRecord, type GoogleSignInResult, type MenuAction, type UpdateStatus } from '@shared/ipc';
+import { IPC_CHANNELS, type AllaiApi, type BrowserSignInResult, type CookiesImportRequest, type DownloadRecord, type GoogleSignInResult, type MenuAction, type UpdateStatus } from '@shared/ipc';
 import type { HistoryProgress, HistoryReport } from '@shared/history';
 import type { SyncStatus } from '@shared/sync';
 import type { AppState, Preferences } from '@shared/types';
@@ -23,6 +23,11 @@ const api: AllaiApi = {
   showTabContextMenu: (tabId) => ipcRenderer.invoke(IPC_CHANNELS.showTabContextMenu, tabId),
   resetTabSession: (tabId) => ipcRenderer.invoke(IPC_CHANNELS.resetTabSession, tabId),
   setTabAuthSharing: (tabId, shared) => ipcRenderer.invoke(IPC_CHANNELS.setTabAuthSharing, tabId, shared),
+  importCookies: (tabId, text) => ipcRenderer.invoke(IPC_CHANNELS.importCookies, tabId, text),
+  chooseCookieFile: () => ipcRenderer.invoke(IPC_CHANNELS.chooseCookieFile),
+  startBrowserSignIn: (tabId) => ipcRenderer.invoke(IPC_CHANNELS.startBrowserSignIn, tabId),
+  cancelBrowserSignIn: () => ipcRenderer.invoke(IPC_CHANNELS.cancelBrowserSignIn),
+  importSafariNow: (tabId) => ipcRenderer.invoke(IPC_CHANNELS.importSafariNow, tabId),
   openExternal: (url) => ipcRenderer.invoke(IPC_CHANNELS.openExternal, url),
   searchAll: (query) => ipcRenderer.invoke(IPC_CHANNELS.searchAll, query),
   openSearchResult: (tabId, query, inList) => ipcRenderer.invoke(IPC_CHANNELS.openSearchResult, tabId, query, inList),
@@ -62,6 +67,8 @@ const api: AllaiApi = {
   onPreferencesChanged: (listener) => subscribe<Preferences>(IPC_CHANNELS.preferencesChanged, listener),
   onDownloadsChanged: (listener) => subscribe<DownloadRecord[]>(IPC_CHANNELS.downloadsChanged, listener),
   onGoogleSignInDone: (listener) => subscribe<GoogleSignInResult>(IPC_CHANNELS.googleSignInDone, listener),
+  onCookiesImportRequest: (listener) => subscribe<CookiesImportRequest>(IPC_CHANNELS.cookiesImportRequest, listener),
+  onBrowserSignInResult: (listener) => subscribe<BrowserSignInResult>(IPC_CHANNELS.browserSignInResult, listener),
   onHistoryProgress: (listener) => subscribe<HistoryProgress>(IPC_CHANNELS.historyProgress, listener),
   onHistoryReport: (listener) => subscribe<HistoryReport>(IPC_CHANNELS.historyReport, listener),
   onHistoryUpdated: (listener) => subscribe<unknown>(IPC_CHANNELS.historyUpdated, () => listener()),

@@ -2176,3 +2176,48 @@ button {
   line-height: 13px;
   text-align: center;
 }
+
+/* ── Cookie import dialog ─────────────────────────────────────────── */
+.cookies-import-modal {
+  width: min(620px, 100%);
+}
+
+.cookies-textarea {
+  width: 100%;
+  min-height: 150px;
+  max-height: 260px;
+  margin-top: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+  background: var(--input-bg);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: calc(11px * var(--ui-scale));
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+}
+
+.cookies-textarea:focus {
+  border-color: var(--accent);
+}
+
+.cookies-file-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.cookies-browser-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0 4px;
+}
+
+.cookies-waiting {
+  color: var(--text-dim);
+  font-size: calc(12px * var(--ui-scale));
+}

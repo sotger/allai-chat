@@ -53,6 +53,56 @@ export interface UpdateStatus {
   message?: string;
 }
 
+/** Result of pasting a browser cookie export into one tab. */
+export interface CookiesImportResult {
+  /** Cookies found in the pasted text. */
+  total: number;
+  /** Cookies that belong to the tab's host. */
+  matched: number;
+  /** Cookies the tab's session accepted. */
+  imported: number;
+  host: string;
+  error?: 'empty' | 'no-host' | 'too-large';
+}
+
+/** Sent when the tab context menu asks the renderer to open the import dialog. */
+export interface CookiesImportRequest {
+  tabId: string;
+}
+
+/** A cookie file chosen by the user; the main process reads it, not the UI. */
+export interface CookieFilePick {
+  canceled: boolean;
+  name?: string;
+  text?: string;
+  error?: 'too-large' | 'read-failed';
+}
+
+/** "Sign in in Safari, then hand the session to the app" — macOS only. */
+export type BrowserSignInState = 'imported' | 'timeout' | 'denied';
+
+export interface BrowserSignInStart {
+  ok: boolean;
+  reason?: 'no-tab' | 'unsupported' | 'no-host';
+}
+
+export interface BrowserSignInResult {
+  tabId: string;
+  state: BrowserSignInState;
+  host?: string;
+  imported?: number;
+}
+
+/** Result of taking the current Safari session for a tab, on demand. */
+export interface SafariImportResult {
+  imported: number;
+  matched: number;
+  host: string;
+  /** True when a session cookie (not just a device id) was among them. */
+  hasSession: boolean;
+  error?: 'denied' | 'missing' | 'unreadable' | 'none' | 'unsupported';
+}
+
 export interface AppInfo {
   name: string;
   version: string;
@@ -122,6 +172,11 @@ export interface AllaiApi {
   showTabContextMenu: (tabId: string) => Promise<void>;
   resetTabSession: (tabId: string) => Promise<void>;
   setTabAuthSharing: (tabId: string, shared: boolean) => Promise<void>;
+  importCookies: (tabId: string, text: string) => Promise<CookiesImportResult>;
+  chooseCookieFile: () => Promise<CookieFilePick>;
+  startBrowserSignIn: (tabId: string) => Promise<BrowserSignInStart>;
+  cancelBrowserSignIn: () => Promise<void>;
+  importSafariNow: (tabId: string) => Promise<SafariImportResult>;
   openExternal: (url: string) => Promise<void>;
   searchAll: (query: string) => Promise<SearchHit[]>;
   openSearchResult: (tabId: string, query: string, inList: boolean) => Promise<number>;
@@ -166,6 +221,8 @@ export interface AllaiApi {
   onPreferencesChanged: (listener: (preferences: Preferences) => void) => () => void;
   onDownloadsChanged: (listener: (downloads: DownloadRecord[]) => void) => () => void;
   onGoogleSignInDone: (listener: (result: GoogleSignInResult) => void) => () => void;
+  onCookiesImportRequest: (listener: (request: CookiesImportRequest) => void) => () => void;
+  onBrowserSignInResult: (listener: (result: BrowserSignInResult) => void) => () => void;
   onHistoryProgress: (listener: (progress: HistoryProgress) => void) => () => void;
   onHistoryReport: (listener: (report: HistoryReport) => void) => () => void;
   onHistoryUpdated: (listener: () => void) => () => void;
@@ -184,6 +241,11 @@ export const IPC_CHANNELS = {
   showTabContextMenu: 'allai:show-tab-context-menu',
   resetTabSession: 'allai:reset-tab-session',
   setTabAuthSharing: 'allai:set-tab-auth-sharing',
+  importCookies: 'allai:import-cookies',
+  chooseCookieFile: 'allai:choose-cookie-file',
+  startBrowserSignIn: 'allai:start-browser-sign-in',
+  cancelBrowserSignIn: 'allai:cancel-browser-sign-in',
+  importSafariNow: 'allai:import-safari-now',
   openExternal: 'allai:open-external',
   searchAll: 'allai:search-all',
   openSearchResult: 'allai:open-search-result',
@@ -223,6 +285,8 @@ export const IPC_CHANNELS = {
   preferencesChanged: 'allai:event:preferences-changed',
   downloadsChanged: 'allai:event:downloads-changed',
   googleSignInDone: 'allai:event:google-sign-in-done',
+  cookiesImportRequest: 'allai:event:cookies-import-request',
+  browserSignInResult: 'allai:event:browser-sign-in-result',
   historyProgress: 'allai:event:history-progress',
   historyReport: 'allai:event:history-report',
   historyUpdated: 'allai:event:history-updated',

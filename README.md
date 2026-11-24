@@ -46,6 +46,15 @@ is still waiting to be read.
   popups that share the tab's session, so OAuth callbacks and `window.opener`
   messaging work. Grok, Claude and Clerk-based services return to the app
   correctly after login.
+- **Sign in with cookies when a service only offers passkeys** — Electron cannot
+  complete WebAuthn, so on macOS a passkey button hands the sign-in to Safari:
+  an existing Safari session is taken over instantly, otherwise the app opens
+  the service there and watches Safari's cookie store until a *session* cookie
+  appears (device ids and cache cookies do not count), then takes the session
+  over, brings the tab back to the service and pulls the app to the front
+  (needs Full Disk Access). **Right-click a tab → Import cookies…** does the same
+  manually, or on any platform: paste a Netscape `cookies.txt` or a `Cookie:`
+  header. Only cookies for that tab's own service are written.
 - **One Google sign-in for all services** — optionally store a Google session
   once and reuse it in new tabs, while every service keeps its own cookies.
   Useful when the same Google account is used everywhere. Can be disabled in
@@ -205,16 +214,19 @@ x64), Windows (x64) and Linux (x64).
 4. To use a second account, add the same provider again; it gets its own session
    and is labelled `ChatGPT 2`, `Gemini 2`, etc.
 5. Right-click a service in the sidebar to **reload**, **find**, **find across
-   all services**, open **Settings**, **reset login info** for that tab only, or
-   toggle **Allow shared Google sign-in** for that tab.
+   all services**, open **Settings**, **reset login info** for that tab only,
+   **import cookies** from a browser, or toggle **Allow shared Google sign-in**
+   for that tab.
 
 Each tab has a separate cookie jar, so two tabs of the same service can stay
 signed in to two different Google accounts. If shared Google sign-in is enabled,
 a new tab starts with the saved Google session; for a tab that should use another
 account, right-click it → **Reset login info**, then sign in with the other
 account. The tab is marked as independent automatically and will not receive the
-shared Google session again. Password, email-code, passkey and other login
-methods are always per-tab and are never shared.
+shared Google session again. Password, email-code and other login methods are
+always per-tab and are never shared. Passkeys do not work inside Electron (see
+[Known limitations](#known-limitations)); use **Import cookies…** when a service
+offers nothing else.
 
 ### Search across services
 
@@ -396,6 +408,22 @@ reopening it means signing in again. This keeps stale credentials from piling up
   editing the same chat at the same moment keep the richer/longer capture; a
   deletion propagated from another device can win over an older copy. The file
   is not encrypted by the app.
+- Passkeys and security keys are not supported: Electron has no authenticator
+  UI, so the app rejects WebAuthn requests and shows a notice. Apple ID's
+  **Sign in with iPhone**, Google passkeys and similar buttons cannot finish
+  here — sign in with the account password and use the phone for the two-factor
+  code instead.
+- A passkey button now opens Safari on macOS; if you would rather not leave the
+  app, close the Safari window — the tab keeps working with a password.
+- If the Safari handoff does not bring a session over, the app keeps a small
+  log at `browser-sign-in.log` in its data folder (hosts and counts only, never
+  cookie values); `denied` there means the Full Disk Access grant is missing.
+- **Import cookies…** is a snapshot, not SSO: the cookies expire, and a service
+  that refreshes its session token may drop the imported one. The Safari route
+  needs macOS and Full Disk Access for the app; a rebuilt (or updated) ad-hoc
+  build can lose that grant and has to be re-added. Cookies exported from Safari
+  carry a macOS user agent while the app presents Chrome/Windows, so a
+  Cloudflare-protected site may still ask for a challenge.
 - macOS builds are ad-hoc signed, so the first launch still needs right-click →
   Open and the app is not notarized. Updates themselves no longer require a
   Developer ID: the fallback updater replaces the bundle and verifies the
@@ -410,7 +438,9 @@ deleted from **Settings → History search → Clear index**. Cloud sync is opt-
 and only writes a file into a folder you choose; your existing cloud client
 (iCloud Drive, Google Drive, OneDrive, Dropbox, …) performs the transfer. Network
 traffic comes from the AI websites you open, plus the update check against
-GitHub Releases (no identifiers are sent).
+GitHub Releases (no identifiers are sent). **Import cookies…** only writes into
+the selected tab's own profile: cookie values are never logged, indexed or
+included in sync/export files.
 
 What the app itself stores:
 

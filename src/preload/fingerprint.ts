@@ -16,6 +16,8 @@ export interface FingerprintData {
   major: string;
   brands: Array<{ brand: string; version: string }>;
   fullVersionList: Array<{ brand: string; version: string }>;
+  /** `process.platform` of the app, used for the passkey notice wording. */
+  platform?: string;
 }
 
 export function buildFingerprintScript(data: FingerprintData): string {
@@ -144,6 +146,85 @@ export function buildFingerprintScript(data: FingerprintData): string {
     defineGetter(nav.connection, 'downlink', 10);
     defineGetter(nav.connection, 'effectiveType', '4g');
   }
+
+  // WebAuthn: Electron has no UI for passkeys or security keys, so a
+  // publicKey request never settles — the site stays on a spinner forever
+  // (Apple's "Sign in with iPhone" is the reported case). Reject such requests
+  // so the page can fall back, and explain why once per page. When a platform
+  // authenticator is configured (signed builds), the request is passed through.
+  const platformAuthenticatorAvailable = () => new Promise((resolve) => {
+    try {
+      if (!window.PublicKeyCredential || !PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) {
+        resolve(false);
+        return;
+      }
+      PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable().then(resolve, () => resolve(false));
+    } catch (err) { resolve(false); }
+  });
+
+  const showPasskeyNotice = () => {
+    if (document.getElementById('allai-passkey-notice')) return;
+    const host = document.body || document.documentElement;
+    if (!host) return;
+
+    const notice = document.createElement('div');
+    notice.id = 'allai-passkey-notice';
+    notice.setAttribute('role', 'status');
+    notice.style.cssText = [
+      'position:fixed', 'left:50%', 'top:14px', 'transform:translateX(-50%)',
+      'z-index:2147483647', 'max-width:420px', 'padding:12px 34px 12px 14px',
+      'border-radius:10px', 'background:#111827', 'color:#f9fafb',
+      'font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
+      'box-shadow:0 8px 24px rgba(0,0,0,.35)', 'box-sizing:border-box'
+    ].join(';');
+    notice.textContent = D.platform === 'darwin'
+      ? 'Passkeys cannot run inside this app. Opening this sign-in in Safari — finish there and the session comes back to this tab.'
+      : 'Passkeys are not available in this app. Use your password, or import cookies from a browser (tab context menu → Import cookies…).';
+
+    const close = document.createElement('button');
+    close.textContent = '×';
+    close.setAttribute('aria-label', 'Dismiss');
+    close.style.cssText = 'position:absolute;right:6px;top:4px;background:none;border:0;color:#cbd5e1;font-size:18px;line-height:1;cursor:pointer;padding:2px 6px';
+    close.addEventListener('click', () => notice.remove());
+    notice.appendChild(close);
+
+    host.appendChild(notice);
+    setTimeout(() => notice.remove(), 20000);
+  };
+
+  // A DOM attribute is the one channel that reaches the preload's isolated
+  // world, which owns the IPC bridge back to the app.
+  let passkeyReported = false;
+  const reportPasskeyBlocked = () => {
+    if (passkeyReported) return;
+    passkeyReported = true;
+    try {
+      document.documentElement.setAttribute('data-allai-passkey-blocked', '1');
+    } catch (err) { /* ignore */ }
+  };
+
+  const guardPasskeyMethod = (method) => {
+    const credentials = navigator.credentials;
+    if (!credentials || typeof credentials[method] !== 'function') return;
+    const original = credentials[method].bind(credentials);
+
+    credentials[method] = function guardedCredentialRequest(options) {
+      if (!options || !options.publicKey) return original(options);
+
+      return platformAuthenticatorAvailable().then((available) => {
+        if (available) return original(options);
+        if (options.mediation !== 'conditional') {
+          showPasskeyNotice();
+          reportPasskeyBlocked();
+        }
+        console.warn('[ALLAI-CHAT] passkey request blocked: this app cannot service WebAuthn authenticators');
+        throw new DOMException('The operation either timed out or was not allowed.', 'NotAllowedError');
+      });
+    };
+  };
+
+  guardPasskeyMethod('get');
+  guardPasskeyMethod('create');
 
   const patchWebGl = (Ctor) => {
     if (!Ctor || !Ctor.prototype || !Ctor.prototype.getParameter) return;

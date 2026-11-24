@@ -14,13 +14,17 @@ import {
 } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
+import { execFile } from 'node:child_process';
 import { v4 as uuid } from 'uuid';
 
-import { IPC_CHANNELS, type AddTabInput, type DownloadRecord, type MenuAction } from '@shared/ipc';
+import { IPC_CHANNELS, type AddTabInput, type CookieFilePick, type DownloadRecord, type MenuAction } from '@shared/ipc';
+import { COOKIE_TEXT_MAX_BYTES } from '@shared/cookies';
 import { getProviderConfig } from '@shared/providers';
 import { createServiceTab } from '@shared/tabs';
 import type { AppState, Preferences, ServiceTab } from '@shared/types';
 import { DownloadManager } from './downloads';
+import { importCookiesIntoTab, tabHost } from './cookie-import';
+import { importSafariSessionNow, watchSafariSession } from './browser-sign-in';
 import { GOOGLE_SIGNIN_PARTITION, copyGoogleCookies, hasGoogleSession } from './google-auth';
 import { getPreferences, isDarkTheme, loadPreferences, savePreferences } from './preferences';
 import { contentsForTab, findInTab, openSearchResult, searchTabs, stopAllFind } from './search';
@@ -491,6 +495,125 @@ function reloadTab(tabId: string): void {
   if (tab) contentsForTab(tab)?.reload();
 }
 
+/** Active "sign in in Safari" watcher, if any. */
+let cancelBrowserSignIn: () => void = () => undefined;
+
+/**
+ * Diagnostics for the browser handoff: a small append-only log in userData.
+ * Cookie values are never written, only hosts and counts.
+ */
+function logBrowserSignIn(message: string): void {
+  const line = `[${new Date().toISOString()}] ${message}\n`;
+  console.log(`[allai] browser sign-in: ${message}`);
+  try {
+    fs.appendFileSync(path.join(app.getPath('userData'), 'browser-sign-in.log'), line);
+  } catch {
+    /* logging must never break the flow */
+  }
+}
+
+/** Per-tab cooldown so a page that retries a passkey request cannot open Safari twice. */
+const browserSignInStartedAt = new Map<string, number>();
+const BROWSER_SIGN_IN_COOLDOWN_MS = 30_000;
+
+/** Bring the app forward after a browser handoff finished. */
+function focusMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  app.focus({ steal: true });
+}
+
+function navigateTab(tabId: string, url: string): void {
+  const tab = state.tabs.find(item => item.id === tabId);
+  if (!tab) return;
+  tab.url = url;
+  saveState();
+  broadcastState();
+  void contentsForTab(tab)?.loadURL(url).catch(() => undefined);
+}
+
+/** URL and host a tab signs in at; a deep auth URL is only a detour. */
+function browserSignInTarget(tab: ServiceTab): { url: string; host: string } {
+  const provider = getProviderConfig(tab.providerId);
+  const url = tab.providerId === 'custom' ? tab.url || provider.url : provider.url;
+  return { url, host: tabHost(url) || tabHost(tab.url) };
+}
+
+function openInSafari(url: string): void {
+  if (!isHttpUrl(url)) return;
+  // Default browser would be wrong here: the cookie store we read is Safari's.
+  execFile('/usr/bin/open', ['-a', 'Safari', url], () => undefined);
+}
+
+/**
+ * Opens the service's own sign-in page in Safari and imports the session the
+ * browser creates. Used by the dialog button and by the passkey interceptor:
+ * Electron cannot complete WebAuthn, so the login has to happen in a browser.
+ */
+async function beginBrowserSignIn(tab: ServiceTab): Promise<boolean> {
+  if (process.platform !== 'darwin') return false;
+  const target = browserSignInTarget(tab);
+  if (!target.host) return false;
+
+  const tabSession = session.fromPartition(tab.partition);
+
+  // Safari may already be signed in (the user logged in on a previous attempt).
+  // Take that session first — no need to open or repeat anything.
+  const existing = await importSafariSessionNow(tabSession, target.host);
+  // Device ids and cache cookies are not a login: only a real session cookie
+  // means Safari can answer instead of the user.
+  if (existing.imported > 0 && existing.hasSession) {
+    logBrowserSignIn(`reused Safari session tab=${tab.label} host=${target.host} imported=${existing.imported}`);
+    navigateTab(tab.id, target.url);
+    sendToRenderer(IPC_CHANNELS.browserSignInResult, {
+      tabId: tab.id,
+      state: 'imported',
+      imported: existing.imported,
+      host: target.host
+    });
+    return true;
+  }
+  logBrowserSignIn(
+    `no reusable session tab=${tab.label} host=${target.host} `
+    + `imported=${existing.imported} session=${existing.hasSession} error=${existing.error ?? '-'}`
+  );
+
+  const now = Date.now();
+  const startedAt = browserSignInStartedAt.get(tab.id) ?? 0;
+  if (now - startedAt < BROWSER_SIGN_IN_COOLDOWN_MS) return true;
+  browserSignInStartedAt.set(tab.id, now);
+
+  cancelBrowserSignIn();
+  openInSafari(target.url);
+
+  logBrowserSignIn(`open tab=${tab.label} host=${target.host} url=${target.url}`);
+  const stop = watchSafariSession({
+    tabId: tab.id,
+    host: target.host,
+    session: tabSession,
+    deadlineMs: 10 * 60_000,
+    onEvent: logBrowserSignIn,
+    onDone: (result) => {
+      cancelBrowserSignIn = () => undefined;
+      // The tab was left on the auth provider; go to the service itself, now
+      // with the imported cookies in place, and pull the app forward so the
+      // user does not have to switch back from the browser manually.
+      if (result.state === 'imported') {
+        navigateTab(tab.id, target.url);
+        focusMainWindow();
+      }
+      sendToRenderer(IPC_CHANNELS.browserSignInResult, result);
+    }
+  });
+  cancelBrowserSignIn = () => {
+    stop();
+    cancelBrowserSignIn = () => undefined;
+  };
+  return true;
+}
+
 function setTabAuthSharing(tabId: string, shared: boolean): void {
   const tab = state.tabs.find(item => item.id === tabId);
   if (!tab) return;
@@ -582,6 +705,10 @@ function showTabContextMenu(tabId: string): void {
     {
       label: 'Reset login info…',
       click: () => { void resetTabSession(tabId); }
+    },
+    {
+      label: 'Import cookies…',
+      click: () => sendToRenderer(IPC_CHANNELS.cookiesImportRequest, { tabId })
     },
     { type: 'separator' },
     {
@@ -1222,6 +1349,73 @@ function wireIpc(): void {
 
   ipcMain.handle(IPC_CHANNELS.setTabAuthSharing, (_event, tabId: string, shared: boolean) => {
     setTabAuthSharing(tabId, shared);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.importCookies, async (_event, tabId: string, text: unknown) => {
+    const tab = state.tabs.find(item => item.id === tabId);
+    if (!tab || typeof text !== 'string') {
+      return { total: 0, matched: 0, imported: 0, host: '', error: 'no-host' as const };
+    }
+    const host = tabHost(tab.url) || tabHost(getProviderConfig(tab.providerId).url);
+    const outcome = await importCookiesIntoTab(session.fromPartition(tab.partition), host, text);
+    // A reload is what makes the imported cookies take effect for the SPA.
+    if (outcome.imported > 0) reloadTab(tabId);
+    return outcome;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.startBrowserSignIn, async (_event, tabId: string) => {
+    const tab = state.tabs.find(item => item.id === tabId);
+    if (!tab) return { ok: false, reason: 'no-tab' as const };
+    if (process.platform !== 'darwin') return { ok: false, reason: 'unsupported' as const };
+
+    return (await beginBrowserSignIn(tab))
+      ? { ok: true as const }
+      : { ok: false, reason: 'no-host' as const };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.cancelBrowserSignIn, () => {
+    cancelBrowserSignIn();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.importSafariNow, async (_event, tabId: string) => {
+    const tab = state.tabs.find(item => item.id === tabId);
+    if (!tab) return { imported: 0, matched: 0, host: '', error: 'none' as const };
+    if (process.platform !== 'darwin') {
+      return { imported: 0, matched: 0, host: '', error: 'unsupported' as const };
+    }
+
+    const target = browserSignInTarget(tab);
+    const result = await importSafariSessionNow(session.fromPartition(tab.partition), target.host);
+    logBrowserSignIn(
+      `import-now tab=${tab.label} host=${target.host} imported=${result.imported}/${result.matched} `
+      + `session=${result.hasSession} error=${result.error ?? '-'}`
+    );
+    if (result.imported > 0 && result.hasSession) navigateTab(tab.id, target.url);
+    return result;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.chooseCookieFile, async (): Promise<CookieFilePick> => {
+    if (!mainWindow) return { canceled: true };
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Choose a cookies.txt export',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Cookie export', extensions: ['txt', 'cookies'] },
+        { name: 'All files', extensions: ['*'] }
+      ]
+    });
+    const filePath = result.filePaths[0];
+    if (result.canceled || !filePath) return { canceled: true };
+
+    const name = path.basename(filePath);
+    try {
+      const stat = await fs.promises.stat(filePath);
+      if (stat.size > COOKIE_TEXT_MAX_BYTES) return { canceled: false, name, error: 'too-large' };
+      const text = await fs.promises.readFile(filePath, 'utf8');
+      return { canceled: false, name, text };
+    } catch {
+      return { canceled: false, name, error: 'read-failed' };
+    }
   });
 
   ipcMain.handle(IPC_CHANNELS.openExternal, (_event, url: string) => {

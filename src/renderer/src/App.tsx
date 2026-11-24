@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { MenuAction } from '@shared/ipc';
 import { AddServiceDialog } from './components/AddServiceDialog';
 import { BroadcastDialog } from './components/BroadcastDialog';
+import { CookiesImportDialog } from './components/CookiesImportDialog';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { GlobalSearch } from './components/GlobalSearch';
 import { IndexConfirmDialog } from './components/IndexConfirmDialog';
@@ -27,6 +28,7 @@ export default function App() {
   const setError = useAppStore((s) => s.setError);
 
   const [version, setVersion] = useState('');
+  const [cookiesTabId, setCookiesTabId] = useState<string>();
 
   useEffect(() => {
     void bootstrap().catch((err: unknown) => {
@@ -112,6 +114,24 @@ export default function App() {
     return () => clearInterval(timer);
   }, [indexingRunning, indexingFinishedAt]);
 
+  useEffect(() => window.allai.onBrowserSignInResult((result) => {
+    const store = useAppStore.getState();
+    if (result.state === 'imported') {
+      store.setNotice(`Safari session imported: ${result.imported} cookie${result.imported === 1 ? '' : 's'}.`);
+    } else if (result.state === 'denied') {
+      store.setNotice('macOS blocked reading Safari cookies. Grant ALLAI-CHAT Full Disk Access, or use Import cookies… from the tab context menu.');
+    } else if (result.state === 'timeout') {
+      store.setNotice('Safari did not hand over a session in time. Finish the sign-in there, then try again.');
+    }
+  }), []);
+
+  useEffect(() => window.allai.onCookiesImportRequest(({ tabId }) => {
+    const store = useAppStore.getState();
+    // Importing rewrites the tab's cookies, so make that tab the visible one.
+    void store.setActiveTab(tabId).catch(() => undefined);
+    setCookiesTabId(tabId);
+  }), []);
+
   useEffect(() => window.allai.onGoogleSignInDone(({ copied, signedIn }) => {
     useAppStore.getState().setNotice(
       !signedIn
@@ -193,6 +213,7 @@ export default function App() {
         <IndexReportDialog />
         <GlobalSearch />
         <BroadcastDialog />
+        <CookiesImportDialog tabId={cookiesTabId} onClose={() => setCookiesTabId(undefined)} />
         {error && (
           <button className="error-toast" onClick={() => setError(undefined)} title="Dismiss">
             {error}

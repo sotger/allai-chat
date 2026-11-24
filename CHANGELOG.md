@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.9.0 — 2026-11-24
+
+### Added
+
+- **Sign in with cookies, for services that only accept passkeys.** Apple's
+  **Sign in with iPhone** and other WebAuthn buttons cannot complete inside
+  Electron, so the tab context menu now has **Import cookies…**:
+  - on macOS a passkey button now hands itself off: if Safari already holds a
+    session for the service it is taken over instantly, otherwise the app opens
+    the service in Safari, watches Safari's cookie store for up to 10 minutes and
+    takes the session over as soon as the login writes it, then returns the tab
+    to the service (needs Full Disk Access for the app). The dialog also has
+    **Open in Safari and wait** and **Take the session from Safari now**;
+  - on every platform you can paste a Netscape `cookies.txt` export or a
+    `Cookie:` header, or load the file with **Choose file…**.
+  Only cookies belonging to the tab's own host are written; everything else in
+  the file is ignored, and values are never logged or synced.
+
+### Fixed
+
+- **The Safari handoff now waits for a real session.** Device ids and Cloudflare
+  cookies appear the moment the browser opens the page; they used to end the
+  watch immediately, so the tab was reloaded still logged out and the session
+  that arrived a minute later was missed. Only a session cookie ends the watch.
+- **The app comes to the front when the browser session arrives**, so the user
+  does not have to switch back from Safari by hand.
+- **Passkey sign-in no longer hangs the page.** Electron cannot service
+  WebAuthn authenticator requests (no platform authenticator is configured and
+  there is no security-key or phone-QR UI), so a site that asks for one never
+  got an answer. Apple's **Sign in with iPhone** was the visible case: the
+  button spun on “Verifying…” forever and the Apple ID form became unusable.
+  Passkey requests are now rejected immediately, so the page falls back to its
+  normal sign-in, and a one-time notice explains that passkeys — including
+  “Sign in with iPhone” — are not available in the app and that the password
+  (plus the two-factor code on the phone) still works.
+
 ## 1.8.1 — 2026-11-23
 
 ### Fixed

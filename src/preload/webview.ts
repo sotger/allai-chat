@@ -1,4 +1,4 @@
-import { webFrame } from 'electron';
+import { ipcRenderer, webFrame } from 'electron';
 
 import { buildFingerprintScript } from './fingerprint';
 
@@ -25,7 +25,24 @@ const fingerprintScript = buildFingerprintScript({
   version: chromeVersion,
   major: chromeMajor,
   brands,
-  fullVersionList
+  fullVersionList,
+  platform: process.platform
+});
+
+// The fingerprint script runs in the page's main world, which cannot reach
+// Electron APIs. It flags a blocked passkey request with a DOM attribute; this
+// isolated world watches for it and tells the app to hand the sign-in off to a
+// real browser.
+const passkeyGuard = new MutationObserver(() => {
+  const root = document.documentElement;
+  if (!root || root.getAttribute('data-allai-passkey-blocked') !== '1') return;
+  root.removeAttribute('data-allai-passkey-blocked');
+  ipcRenderer.sendToHost('allai:passkey-blocked');
+});
+passkeyGuard.observe(document, {
+  attributes: true,
+  subtree: true,
+  attributeFilter: ['data-allai-passkey-blocked']
 });
 
 // Runs in the page's main world, before page scripts, even with contextIsolation.
