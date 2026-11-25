@@ -86,6 +86,22 @@ export interface BrowserSignInStart {
   reason?: 'no-tab' | 'unsupported' | 'no-host';
 }
 
+/** What macOS currently allows: reading Safari's cookies needs Full Disk Access. */
+export type SafariCookieAccess = 'ok' | 'denied' | 'missing' | 'unsupported';
+
+/** Optional Safari automation: Apple Events plus Safari's JS-from-events setting. */
+export type SafariControlAccess = 'unknown' | 'ok' | 'denied' | 'no-js' | 'unsupported';
+
+export interface PermissionStatus {
+  safariCookies: SafariCookieAccess;
+  safariControl: SafariControlAccess;
+}
+
+/** Set `passkey` when the handoff starts from a blocked WebAuthn request. */
+export interface BrowserSignInOptions {
+  passkey?: boolean;
+}
+
 export interface BrowserSignInResult {
   tabId: string;
   state: BrowserSignInState;
@@ -174,7 +190,12 @@ export interface AllaiApi {
   setTabAuthSharing: (tabId: string, shared: boolean) => Promise<void>;
   importCookies: (tabId: string, text: string) => Promise<CookiesImportResult>;
   chooseCookieFile: () => Promise<CookieFilePick>;
-  startBrowserSignIn: (tabId: string) => Promise<BrowserSignInStart>;
+  /** `options.passkey` opens the service's federated sign-in entry when known. */
+  getPermissionStatus: () => Promise<PermissionStatus>;
+  requestSafariControl: () => Promise<PermissionStatus>;
+  openSafari: () => Promise<void>;
+  openFullDiskAccessSettings: () => Promise<void>;
+  startBrowserSignIn: (tabId: string, options?: BrowserSignInOptions) => Promise<BrowserSignInStart>;
   cancelBrowserSignIn: () => Promise<void>;
   importSafariNow: (tabId: string) => Promise<SafariImportResult>;
   openExternal: (url: string) => Promise<void>;
@@ -223,6 +244,7 @@ export interface AllaiApi {
   onGoogleSignInDone: (listener: (result: GoogleSignInResult) => void) => () => void;
   onCookiesImportRequest: (listener: (request: CookiesImportRequest) => void) => () => void;
   onBrowserSignInResult: (listener: (result: BrowserSignInResult) => void) => () => void;
+  onPermissionStatus: (listener: (status: PermissionStatus) => void) => () => void;
   onHistoryProgress: (listener: (progress: HistoryProgress) => void) => () => void;
   onHistoryReport: (listener: (report: HistoryReport) => void) => () => void;
   onHistoryUpdated: (listener: () => void) => () => void;
@@ -243,8 +265,14 @@ export const IPC_CHANNELS = {
   setTabAuthSharing: 'allai:set-tab-auth-sharing',
   importCookies: 'allai:import-cookies',
   chooseCookieFile: 'allai:choose-cookie-file',
+  getPermissionStatus: 'allai:get-permission-status',
+  requestSafariControl: 'allai:request-safari-control',
+  openSafari: 'allai:open-safari',
+  openFullDiskAccessSettings: 'allai:open-full-disk-access-settings',
   startBrowserSignIn: 'allai:start-browser-sign-in',
   cancelBrowserSignIn: 'allai:cancel-browser-sign-in',
+  /** Guest → main: a passkey request was blocked. Works from popups too. */
+  passkeyBlocked: 'allai:passkey-blocked',
   importSafariNow: 'allai:import-safari-now',
   openExternal: 'allai:open-external',
   searchAll: 'allai:search-all',
@@ -287,6 +315,7 @@ export const IPC_CHANNELS = {
   googleSignInDone: 'allai:event:google-sign-in-done',
   cookiesImportRequest: 'allai:event:cookies-import-request',
   browserSignInResult: 'allai:event:browser-sign-in-result',
+  permissionStatus: 'allai:event:permission-status',
   historyProgress: 'allai:event:history-progress',
   historyReport: 'allai:event:history-report',
   historyUpdated: 'allai:event:history-updated',

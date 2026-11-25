@@ -8,6 +8,7 @@ import { GlobalSearch } from './components/GlobalSearch';
 import { IndexConfirmDialog } from './components/IndexConfirmDialog';
 import { IndexReportDialog } from './components/IndexReportDialog';
 import { IndexStatusBar } from './components/IndexStatusBar';
+import { PermissionAlarm, PermissionDialog } from './components/PermissionGate';
 import { QueuePanel } from './components/QueuePanel';
 import { ServiceHost } from './components/ServiceHost';
 import { SettingsDialog } from './components/SettingsDialog';
@@ -38,6 +39,29 @@ export default function App() {
   }, [bootstrap, setError]);
 
   useEffect(() => window.allai.onStateChanged(applyState), [applyState]);
+
+  // Full Disk Access is what the Safari handoff needs. macOS has no way to ask
+  // for it, so the app explains it once and keeps a strip until it is granted.
+  useEffect(() => {
+    void window.allai.getPermissionStatus().then((status) => {
+      const store = useAppStore.getState();
+      store.setPermissionStatus(status);
+      if (status.safariCookies === 'denied' && !store.preferences.fullDiskAccessNoticeHidden) {
+        store.setPermissionDialogOpen(true);
+      }
+    }).catch(() => undefined);
+  }, []);
+
+  useEffect(() => window.allai.onPermissionStatus((status) => {
+    const store = useAppStore.getState();
+    store.setPermissionStatus(status);
+    const blocked = status.safariCookies === 'denied'
+      || status.safariControl === 'denied'
+      || status.safariControl === 'no-js';
+    if (blocked && !store.preferences.fullDiskAccessNoticeHidden) {
+      store.setPermissionDialogOpen(true);
+    }
+  }), []);
 
   // Interface text size is a single scale factor applied by CSS to every font
   // size in the app shell. Web pages keep their own zoom setting.
@@ -203,6 +227,7 @@ export default function App() {
       <div className="app">
         <Sidebar version={version} onAdd={() => setAddOpen(true)} />
         <main className="content">
+          <PermissionAlarm />
           {isReady ? <ServiceHost onAdd={() => setAddOpen(true)} /> : <div className="loading">Loading…</div>}
           <IndexStatusBar />
         </main>
@@ -214,6 +239,7 @@ export default function App() {
         <GlobalSearch />
         <BroadcastDialog />
         <CookiesImportDialog tabId={cookiesTabId} onClose={() => setCookiesTabId(undefined)} />
+        <PermissionDialog />
         {error && (
           <button className="error-toast" onClick={() => setError(undefined)} title="Dismiss">
             {error}

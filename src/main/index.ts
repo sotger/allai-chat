@@ -17,7 +17,7 @@ import fs from 'node:fs';
 import { execFile } from 'node:child_process';
 import { v4 as uuid } from 'uuid';
 
-import { IPC_CHANNELS, type AddTabInput, type CookieFilePick, type DownloadRecord, type MenuAction } from '@shared/ipc';
+import { IPC_CHANNELS, type AddTabInput, type BrowserSignInOptions, type CookieFilePick, type DownloadRecord, type MenuAction, type PermissionStatus, type SafariCookieAccess } from '@shared/ipc';
 import { COOKIE_TEXT_MAX_BYTES } from '@shared/cookies';
 import { getProviderConfig } from '@shared/providers';
 import { createServiceTab } from '@shared/tabs';
@@ -25,6 +25,8 @@ import type { AppState, Preferences, ServiceTab } from '@shared/types';
 import { DownloadManager } from './downloads';
 import { importCookiesIntoTab, tabHost } from './cookie-import';
 import { importSafariSessionNow, watchSafariSession } from './browser-sign-in';
+import { readSafariCookies } from './safari-cookies';
+import { clickSafariSignIn, closeSafariTab, probeSafariControl, type SafariControlStatus } from './safari-control';
 import { GOOGLE_SIGNIN_PARTITION, copyGoogleCookies, hasGoogleSession } from './google-auth';
 import { getPreferences, isDarkTheme, loadPreferences, savePreferences } from './preferences';
 import { contentsForTab, findInTab, openSearchResult, searchTabs, stopAllFind } from './search';
@@ -534,11 +536,28 @@ function navigateTab(tabId: string, url: string): void {
   void contentsForTab(tab)?.loadURL(url).catch(() => undefined);
 }
 
-/** URL and host a tab signs in at; a deep auth URL is only a detour. */
-function browserSignInTarget(tab: ServiceTab): { url: string; host: string } {
+/**
+ * URL and host a tab signs in at. `url` is where the tab goes afterwards (the
+ * service itself); `openUrl` is what the browser opens, which is a deep sign-in
+ * entry only when it stays on the same host — cookies are matched by host, and
+ * the tab's own `state`/`nonce` must not be reused in the browser.
+ */
+function browserSignInTarget(
+  tab: ServiceTab,
+  fromPasskey = false,
+  fromAuth = false
+): { url: string; openUrl: string; host: string } {
   const provider = getProviderConfig(tab.providerId);
   const url = tab.providerId === 'custom' ? tab.url || provider.url : provider.url;
-  return { url, host: tabHost(url) || tabHost(tab.url) };
+  const host = tabHost(url) || tabHost(tab.url);
+  const deep = fromPasskey ? provider.passkeySignInUrl : fromAuth ? provider.signInUrl : undefined;
+  const openUrl = deep && isHttpUrl(deep) && tabHost(deep) === host ? deep : url;
+  return { url, openUrl, host };
+}
+
+/** The service's "signed in" cookie rule, when it declares one. */
+function sessionPatternFor(tab: ServiceTab): string | undefined {
+  return getProviderConfig(tab.providerId).sessionCookiePattern;
 }
 
 function openInSafari(url: string): void {
@@ -552,16 +571,25 @@ function openInSafari(url: string): void {
  * browser creates. Used by the dialog button and by the passkey interceptor:
  * Electron cannot complete WebAuthn, so the login has to happen in a browser.
  */
-async function beginBrowserSignIn(tab: ServiceTab): Promise<boolean> {
-  if (process.platform !== 'darwin') return false;
-  const target = browserSignInTarget(tab);
-  if (!target.host) return false;
+type BrowserSignInOutcome = 'imported' | 'opened' | 'none';
+
+async function beginBrowserSignIn(
+  tab: ServiceTab,
+  fromPasskey = false,
+  options: { skipReuse?: boolean; fromAuth?: boolean } = {}
+): Promise<BrowserSignInOutcome> {
+  if (process.platform !== 'darwin') return 'none';
+  const target = browserSignInTarget(tab, fromPasskey, options.fromAuth === true);
+  if (!target.host) return 'none';
 
   const tabSession = session.fromPartition(tab.partition);
 
   // Safari may already be signed in (the user logged in on a previous attempt).
-  // Take that session first — no need to open or repeat anything.
-  const existing = await importSafariSessionNow(tabSession, target.host);
+  // Take that session first — no need to open or repeat anything. Callers that
+  // saw the service reject imported cookies pass `skipReuse`.
+  const existing = options.skipReuse
+    ? { imported: 0, hasSession: false as boolean, error: 'none' as const }
+    : await importSafariSessionNow(tabSession, target.host, sessionPatternFor(tab));
   // Device ids and cache cookies are not a login: only a real session cookie
   // means Safari can answer instead of the user.
   if (existing.imported > 0 && existing.hasSession) {
@@ -573,7 +601,7 @@ async function beginBrowserSignIn(tab: ServiceTab): Promise<boolean> {
       imported: existing.imported,
       host: target.host
     });
-    return true;
+    return 'imported';
   }
   logBrowserSignIn(
     `no reusable session tab=${tab.label} host=${target.host} `
@@ -582,16 +610,17 @@ async function beginBrowserSignIn(tab: ServiceTab): Promise<boolean> {
 
   const now = Date.now();
   const startedAt = browserSignInStartedAt.get(tab.id) ?? 0;
-  if (now - startedAt < BROWSER_SIGN_IN_COOLDOWN_MS) return true;
+  if (now - startedAt < BROWSER_SIGN_IN_COOLDOWN_MS) return 'opened';
   browserSignInStartedAt.set(tab.id, now);
 
   cancelBrowserSignIn();
-  openInSafari(target.url);
+  openInSafari(target.openUrl);
 
-  logBrowserSignIn(`open tab=${tab.label} host=${target.host} url=${target.url}`);
+  logBrowserSignIn(`open tab=${tab.label} host=${target.host} url=${target.openUrl}`);
   const stop = watchSafariSession({
     tabId: tab.id,
     host: target.host,
+    sessionCookiePattern: sessionPatternFor(tab),
     session: tabSession,
     deadlineMs: 10 * 60_000,
     onEvent: logBrowserSignIn,
@@ -602,7 +631,9 @@ async function beginBrowserSignIn(tab: ServiceTab): Promise<boolean> {
       // user does not have to switch back from the browser manually.
       if (result.state === 'imported') {
         navigateTab(tab.id, target.url);
-        focusMainWindow();
+        // The browser did its job; put the user back in the app.
+        void closeSafariTab(target.host);
+        activateApp();
       }
       sendToRenderer(IPC_CHANNELS.browserSignInResult, result);
     }
@@ -611,7 +642,50 @@ async function beginBrowserSignIn(tab: ServiceTab): Promise<boolean> {
     stop();
     cancelBrowserSignIn = () => undefined;
   };
-  return true;
+  return 'opened';
+}
+
+/**
+ * Google/Microsoft/Apple sign-in started from the service page navigates the tab
+ * itself to the provider, where the embedded browser gets a degraded form (or a
+ * "browser not secure" wall). Treat it like a blocked passkey: finish the login
+ * in Safari and import the session afterwards.
+ */
+const authHandoffUntil = new Map<string, number>();
+const authHandoffAttempts = new Map<string, { count: number; at: number }>();
+const AUTH_HANDOFF_SUPPRESS_MS = 3 * 60_000;
+
+async function handOffAuthNavigation(tab: ServiceTab): Promise<void> {
+  if (process.platform !== 'darwin') return;
+  // Take the session Safari already has, if any: this is what makes a Google
+  // sign-in instant for services whose Safari cookies are already valid. The
+  // bounce loop this used to cause is prevented by the loop guard below.
+  const outcome = await beginBrowserSignIn(tab, false, { fromAuth: true });
+  if (outcome === 'none') return;
+  const provider = getProviderConfig(tab.providerId);
+  const root = tab.providerId === 'custom' ? tab.url || provider.url : provider.url;
+  // 'opened' leaves the tab on the provider page on purpose: the import
+  // navigates back to the service, and a return now would bounce right away.
+  if (outcome === 'imported') {
+    navigateTab(tab.id, root);
+    return;
+  }
+
+  // Optional: press the service's own "Sign in / Continue with Google" button in
+  // Safari through Apple Events, so the user does not repeat the click. Needs
+  // Automation and Safari's "Allow JavaScript from Apple Events"; anything
+  // missing just means they click it themselves.
+  const host = tabHost(root);
+  if (!host) return;
+  setTimeout(() => {
+    void clickSafariSignIn(host).then((result) => {
+      logBrowserSignIn(`safari-control tab=${tab.label} host=${host} result=${result}`);
+      if (result === 'ok' || result === 'denied' || result === 'no-js') {
+        safariControlCache = result;
+        sendToRenderer(IPC_CHANNELS.permissionStatus, permissionStatus());
+      }
+    });
+  }, 3500);
 }
 
 function setTabAuthSharing(tabId: string, shared: boolean): void {
@@ -1111,6 +1185,32 @@ function wireWebContents(contents: Electron.WebContents): void {
     if (!isHttpUrl(url) && url !== 'about:blank') event.preventDefault();
   });
 
+  // The service handed the tab (or its popup) over to a sign-in provider. That
+  // form cannot work here, so switch the login to Safari.
+  contents.on('did-start-navigation', (event) => {
+    if (!event.isMainFrame || !isHttpUrl(event.url)) return;
+    // Test-only switch: lets a throwaway profile stay on the provider's page.
+    if (process.env.ALLAI_DISABLE_AUTH_HANDOFF === '1') return;
+    if (!isAuthHost(tabHost(event.url))) return;
+    const tab = tabForContents(contents);
+    if (!tab) return;
+    if (Date.now() < (authHandoffUntil.get(tab.id) ?? 0)) return;
+    authHandoffUntil.set(tab.id, Date.now() + AUTH_HANDOFF_SUPPRESS_MS);
+
+    // A service that keeps bouncing to its provider must not spin forever.
+    const now = Date.now();
+    const previous = authHandoffAttempts.get(tab.id);
+    const count = previous && now - previous.at < 60_000 ? previous.count + 1 : 1;
+    authHandoffAttempts.set(tab.id, { count, at: now });
+    if (count > 2) {
+      logBrowserSignIn(`auth handoff loop guard tab=${tab.label} attempts=${count}`);
+      return;
+    }
+    void handOffAuthNavigation(tab);
+    // A popup that only hosted the provider's login has nothing left to show.
+    if (contentsForTab(tab) !== contents) contents.close();
+  });
+
   if (isWebview) {
     contents.on('did-start-navigation', (event) => {
       if (event.isMainFrame) markAuthNavigation(contents, event.url);
@@ -1129,6 +1229,9 @@ function wireWebContents(contents: Electron.WebContents): void {
       markAuthNavigation(contents, contents.getURL());
       scheduleCapture(contents);
       void harvestTab(contents);
+      // Back on a normal page: the loop guard for the auth handoff can lift.
+      const tab = tabForContents(contents);
+      if (tab && !isAuthHost(tabHost(contents.getURL()))) authHandoffUntil.delete(tab.id);
     });
   }
 
@@ -1363,18 +1466,43 @@ function wireIpc(): void {
     return outcome;
   });
 
-  ipcMain.handle(IPC_CHANNELS.startBrowserSignIn, async (_event, tabId: string) => {
-    const tab = state.tabs.find(item => item.id === tabId);
-    if (!tab) return { ok: false, reason: 'no-tab' as const };
-    if (process.platform !== 'darwin') return { ok: false, reason: 'unsupported' as const };
+  ipcMain.handle(
+    IPC_CHANNELS.startBrowserSignIn,
+    async (_event, tabId: string, options?: BrowserSignInOptions) => {
+      const tab = state.tabs.find(item => item.id === tabId);
+      if (!tab) return { ok: false, reason: 'no-tab' as const };
+      if (process.platform !== 'darwin') return { ok: false, reason: 'unsupported' as const };
 
-    return (await beginBrowserSignIn(tab))
-      ? { ok: true as const }
-      : { ok: false, reason: 'no-host' as const };
-  });
+      return (await beginBrowserSignIn(tab, options?.passkey === true)) !== 'none'
+        ? { ok: true as const }
+        : { ok: false, reason: 'no-host' as const };
+    }
+  );
 
   ipcMain.handle(IPC_CHANNELS.cancelBrowserSignIn, () => {
     cancelBrowserSignIn();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.getPermissionStatus, () => permissionStatus());
+  ipcMain.handle(IPC_CHANNELS.openSafari, () => {
+    if (process.platform === 'darwin') execFile('/usr/bin/open', ['-a', 'Safari'], () => undefined);
+  });
+  ipcMain.handle(IPC_CHANNELS.requestSafariControl, async () => {
+    safariControlCache = await probeSafariControl();
+    const status = permissionStatus();
+    sendToRenderer(IPC_CHANNELS.permissionStatus, status);
+    return status;
+  });
+  ipcMain.handle(IPC_CHANNELS.openFullDiskAccessSettings, () => {
+    if (process.platform === 'darwin') void shell.openExternal(FULL_DISK_ACCESS_PANE);
+  });
+
+  // A blocked passkey request, from a <webview> or from an OAuth popup. The
+  // popup shares the tab's partition, so the session identifies the tab even
+  // though the popup has no webview host to talk to.
+  ipcMain.on(IPC_CHANNELS.passkeyBlocked, (event) => {
+    const tab = tabForContents(event.sender);
+    if (tab) void beginBrowserSignIn(tab, true);
   });
 
   ipcMain.handle(IPC_CHANNELS.importSafariNow, async (_event, tabId: string) => {
@@ -1385,7 +1513,8 @@ function wireIpc(): void {
     }
 
     const target = browserSignInTarget(tab);
-    const result = await importSafariSessionNow(session.fromPartition(tab.partition), target.host);
+    const result = await importSafariSessionNow(
+      session.fromPartition(tab.partition), target.host, sessionPatternFor(tab));
     logBrowserSignIn(
       `import-now tab=${tab.label} host=${target.host} imported=${result.imported}/${result.matched} `
       + `session=${result.hasSession} error=${result.error ?? '-'}`
@@ -1740,6 +1869,38 @@ function createMainWindow(): BrowserWindow {
   return window;
 }
 
+const FULL_DISK_ACCESS_PANE = 'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles';
+
+/**
+ * Whether macOS currently lets the app read Safari's cookie store. macOS has no
+ * "request permission" API for Full Disk Access, so the renderer can only tell
+ * the user where to flip the switch.
+ */
+/**
+ * Cached result of the optional Safari control probe. Unknown until the user
+ * asks for it, because probing is what makes macOS show its Automation prompt.
+ */
+let safariControlCache: SafariControlStatus | undefined;
+
+function permissionStatus(): PermissionStatus {
+  if (process.platform !== 'darwin') {
+    return { safariCookies: 'unsupported', safariControl: 'unsupported' };
+  }
+  const read = readSafariCookies();
+  const safariCookies: SafariCookieAccess =
+    read.error === 'denied' ? 'denied' : read.error === 'missing' ? 'missing' : 'ok';
+  return { safariCookies, safariControl: safariControlCache ?? 'unknown' };
+}
+
+/** Brings the app to the front, also when Safari was full screen on top. */
+function activateApp(): void {
+  focusMainWindow();
+  app.dock?.show();
+  void new Promise<void>((resolve) => {
+    execFile('/usr/bin/osascript', ['-e', 'tell application id "com.allaichat.app" to activate'], () => resolve());
+  });
+}
+
 // ── App lifecycle ────────────────────────────────────────────────────
 app.whenReady().then(() => {
   app.setAboutPanelOptions({
@@ -1761,6 +1922,22 @@ app.whenReady().then(() => {
 
   mainWindow = createMainWindow();
   wireIpc();
+  if (permissionStatus().safariCookies === 'denied') {
+    console.log('[allai] Full Disk Access missing: browser sign-in cannot read Safari cookies');
+  }
+  // Check every permission the browser handoff uses, right at startup: the
+  // Automation probe is what makes macOS show its prompt. Running it here means
+  // the user is asked once, before the first login, not in the middle of one.
+  setTimeout(() => {
+    void (async () => {
+      safariControlCache = await probeSafariControl();
+      sendToRenderer(IPC_CHANNELS.permissionStatus, permissionStatus());
+    })();
+  }, 1500);
+  // The user may fix a grant in System Settings while the app is open.
+  mainWindow.on('focus', () => {
+    sendToRenderer(IPC_CHANNELS.permissionStatus, permissionStatus());
+  });
   rebuildMenu();
   initAutoUpdater();
   historyReconciler.start();

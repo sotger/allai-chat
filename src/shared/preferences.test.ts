@@ -12,7 +12,8 @@ describe('normalizePreferences', () => {
       historyIndexEnabled: true,
       historyBackfillEnabled: false,
       syncFolder: '',
-      syncEnabled: false
+      syncEnabled: false,
+      fullDiskAccessNoticeHidden: false
     });
   });
 
@@ -34,7 +35,8 @@ describe('normalizePreferences', () => {
       historyIndexEnabled: false,
       historyBackfillEnabled: true,
       syncFolder: '/Users/me/iCloud/ALLAI-CHAT',
-      syncEnabled: true
+      syncEnabled: true,
+      fullDiskAccessNoticeHidden: false
     });
   });
 
@@ -51,8 +53,14 @@ describe('normalizePreferences', () => {
       historyIndexEnabled: true,
       historyBackfillEnabled: false,
       syncFolder: '',
-      syncEnabled: false
+      syncEnabled: false,
+      fullDiskAccessNoticeHidden: false
     });
+  });
+
+  it('remembers that the Full Disk Access warning was silenced', () => {
+    expect(normalizePreferences({ fullDiskAccessNoticeHidden: true }, '/tmp').fullDiskAccessNoticeHidden).toBe(true);
+    expect(normalizePreferences({ fullDiskAccessNoticeHidden: 'yes' as never }, '/tmp').fullDiskAccessNoticeHidden).toBe(false);
   });
 
   it('falls back for an unknown interface font size', () => {

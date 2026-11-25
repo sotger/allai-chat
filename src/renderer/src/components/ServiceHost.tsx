@@ -48,30 +48,12 @@ function ServiceWebview({ tab, active }: ServiceWebviewProps) {
     };
     const onNavigate = (): void => updateNavigation();
 
-    // Electron cannot finish a WebAuthn ceremony, so a passkey button is a dead
-    // end in the guest. The preload flags it; hand the sign-in to Safari, which
-    // can complete it, and import the resulting session automatically.
-    const onIpcMessage = (event: Electron.IpcMessageEvent): void => {
-      if (event.channel !== 'allai:passkey-blocked') return;
-      void window.allai.startBrowserSignIn(tab.id)
-        .then((result) => {
-          const store = useAppStore.getState();
-          if (result.ok) {
-            store.setNotice('Passkey sign-in cannot run in this app — continuing in Safari. The session comes back here automatically.');
-          } else if (result.reason === 'unsupported') {
-            store.setNotice('Passkey sign-in needs a browser. Use Import cookies… from the tab context menu to bring the session over.');
-          }
-        })
-        .catch(() => undefined);
-    };
-
     webview.addEventListener('did-start-loading', onStartLoading);
     webview.addEventListener('did-stop-loading', onStopLoading);
     webview.addEventListener('page-title-updated', onTitle as EventListener);
     webview.addEventListener('page-favicon-updated', onFavicon as EventListener);
     webview.addEventListener('did-navigate', onNavigate);
     webview.addEventListener('did-navigate-in-page', onNavigate);
-    webview.addEventListener('ipc-message', onIpcMessage as EventListener);
 
     return () => {
       webview.removeEventListener('did-start-loading', onStartLoading);
@@ -80,7 +62,6 @@ function ServiceWebview({ tab, active }: ServiceWebviewProps) {
       webview.removeEventListener('page-favicon-updated', onFavicon as EventListener);
       webview.removeEventListener('did-navigate', onNavigate);
       webview.removeEventListener('did-navigate-in-page', onNavigate);
-      webview.removeEventListener('ipc-message', onIpcMessage as EventListener);
     };
   }, [tab.id, patchRuntime]);
 

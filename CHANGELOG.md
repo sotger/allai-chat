@@ -36,6 +36,48 @@
   “Sign in with iPhone” — are not available in the app and that the password
   (plus the two-factor code on the phone) still works.
 
+
+### Added — 2026-11-25 (browser handoff and permissions)
+
+- **The browser handoff is no longer passkey-only.** When a tab, or the sign-in
+  popup it opened, navigates itself to a sign-in provider (`accounts.google.com`,
+  `login.microsoftonline.com`, `appleid.apple.com`, GitHub, Clerk, …), the app
+  behaves exactly as it does for a blocked passkey: it takes the session Safari
+  already holds for the service, or opens the service in Safari when there is
+  none. **Continue with Google** now finishes instead of leaving a dead form in
+  the tab.
+- **Session cookies are matched per service.** `ProviderConfig.sessionCookiePattern`
+  lets a service declare what "signed in" looks like — Google's `SID`/`__Secure-*PSID`
+  family for Gemini, `sessionKey` for Claude — instead of assuming ChatGPT's
+  `*session-token`. Without it the watch kept waiting until its 10-minute deadline.
+- **Permissions are checked at startup**, not the first time a service needs
+  them. Full Disk Access and the optional Safari control are probed when the app
+  opens; a dialog lists every check with `Allowed` / `Missing` / `Not checked`, an
+  alarm strip stays on screen while something is missing, and the dialog closes
+  itself as soon as the grants land. `Full Disk Access` is required for the
+  handoff; `Control Safari` only makes it hands-free.
+- **The browser gives focus back.** After a successful import the app closes the
+  Safari tab it opened and activates itself, so the user does not have to switch
+  back by hand.
+- **Deep sign-in entries.** The handoff opens ChatGPT's `/auth/login` (and
+  `/auth/login_with?connection=apple` for a blocked passkey) instead of the
+  service home page; a deep link is only used when it stays on the tab's host.
+
+### Fixed — 2026-11-25
+
+- **Endless bounce between a service and its sign-in provider.** The first version
+  of the handoff re-imported and re-navigated on every auth navigation; on Gemini
+  that produced 24 imports in 11 seconds, no browser window and no login. A
+  per-tab guard now allows at most two attempts a minute and is only lifted when
+  a normal page finishes loading.
+- **Imported Safari cookies do work for Google.** Verified on Gemini: the tab
+  loads `gemini.google.com` signed in after `imported 22` cookies. The earlier
+  failure was the bounce above, not Google rejecting the session.
+- **Packaged builds keep the guest preload.** Importing a shared module into
+  `src/preload/webview.ts` made Rollup split a `chunks/ipc-*.cjs` file that a
+  sandboxed preload cannot require from inside the asar — the preload failed to
+  load and `window.allai` disappeared. The channel name is a literal again.
+
 ## 1.8.1 — 2026-11-23
 
 ### Fixed

@@ -3,7 +3,7 @@
  * several generations of session cookies; checking a few stable ones avoids
  * copying boring preference cookies (NID, consent, language) around.
  */
-const AUTH_COOKIE_NAMES = [
+export const GOOGLE_AUTH_COOKIE_NAMES = [
   'SID',
   'HSID',
   'SSID',
@@ -18,5 +18,5 @@ const AUTH_COOKIE_NAMES = [
 ];
 
 export function isGoogleAuthCookieName(name: string): boolean {
-  return AUTH_COOKIE_NAMES.includes(name);
+  return GOOGLE_AUTH_COOKIE_NAMES.includes(name);
 }

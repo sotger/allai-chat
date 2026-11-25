@@ -26,6 +26,25 @@ export interface ProviderConfig {
    * page has no clickable "New chat" control (custom services have none).
    */
   newChatUrl?: string;
+  /**
+   * Where the Safari handoff opens when a passkey button was blocked: the
+   * service's own entry into its federated sign-in, so the browser lands one
+   * click away from the provider instead of on the service home page. Only
+   * used when it shares the tab's host — cookies are matched by host.
+   */
+  passkeySignInUrl?: string;
+  /**
+   * The service's own login page, opened by the browser handoff when the page
+   * bounced to a sign-in provider. Saves a click inside the browser.
+   */
+  signInUrl?: string;
+  /**
+   * Regex source (used case-insensitively) for a cookie name that means "this
+   * profile is signed in" for the service. The handoff waits for such a cookie
+   * before importing, so device ids and cache cookies cannot end the watch.
+   * Falls back to the ChatGPT rule (`*session-token` / `session`).
+   */
+  sessionCookiePattern?: string;
 }
 
 /** One vertical tab: an isolated session running a single AI service. */
@@ -84,4 +103,9 @@ export interface Preferences {
   syncFolder: string;
   /** Write/merge the sync file automatically in `syncFolder`. */
   syncEnabled: boolean;
+  /**
+   * The user asked not to be warned again about the missing Full Disk Access
+   * grant, which the Safari browser handoff needs to read cookies.
+   */
+  fullDiskAccessNoticeHidden: boolean;
 }

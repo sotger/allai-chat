@@ -29,6 +29,7 @@ export function normalizePreferences(raw: Partial<Preferences> | undefined, fall
     historyIndexEnabled: raw?.historyIndexEnabled !== false,
     historyBackfillEnabled: raw?.historyBackfillEnabled === true,
     syncFolder: typeof raw?.syncFolder === 'string' ? raw.syncFolder.trim() : '',
-    syncEnabled: raw?.syncEnabled === true
+    syncEnabled: raw?.syncEnabled === true,
+    fullDiskAccessNoticeHidden: raw?.fullDiskAccessNoticeHidden === true
   };
 }

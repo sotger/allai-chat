@@ -25,6 +25,25 @@ export interface SafariImportResult {
   error?: 'denied' | 'missing' | 'unreadable' | 'none';
 }
 
+/**
+ * Cookies that mean "this is the session", as opposed to a device id or cache.
+ * This is the ChatGPT rule; services that name the cookie differently declare
+ * their own pattern in `ProviderConfig.sessionCookiePattern`.
+ */
+export const DEFAULT_SESSION_COOKIE_PATTERN = 'session-token|(^|\\.)session$';
+
+/** Compiles a provider's session-cookie rule, falling back to the default. */
+export function compileSessionCookiePattern(source?: string): RegExp {
+  if (source) {
+    try {
+      return new RegExp(source, 'i');
+    } catch {
+      /* a broken pattern must not disable the handoff */
+    }
+  }
+  return new RegExp(DEFAULT_SESSION_COOKIE_PATTERN, 'i');
+}
+
 async function writeMatching(session: Session, cookies: CookieRecord[]): Promise<number> {
   let imported = 0;
   for (const cookie of cookies) {
@@ -43,7 +62,8 @@ async function writeMatching(session: Session, cookies: CookieRecord[]): Promise
  */
 export async function importSafariSessionNow(
   session: Session,
-  host: string
+  host: string,
+  sessionCookiePattern?: string
 ): Promise<SafariImportResult> {
   const read = readSafariCookies();
   if (read.error) return { imported: 0, matched: 0, host, hasSession: false, error: read.error };
@@ -53,7 +73,8 @@ export async function importSafariSessionNow(
     return { imported: 0, matched: 0, host, hasSession: false, error: 'none' };
   }
 
-  const hasSession = matching.some((cookie) => SESSION_COOKIE_PATTERN.test(cookie.name));
+  const pattern = compileSessionCookiePattern(sessionCookiePattern);
+  const hasSession = matching.some((cookie) => pattern.test(cookie.name));
   const imported = await writeMatching(session, matching);
   return { imported, matched: matching.length, host, hasSession };
 }
@@ -63,6 +84,8 @@ export interface WatchOptions {
   host: string;
   session: Session;
   onDone: (result: BrowserSignInResult) => void;
+  /** The service's "signed in" cookie rule; defaults to the ChatGPT one. */
+  sessionCookiePattern?: string;
   /** Poll interval; tests shrink it. */
   pollMs?: number;
   /** Give up after this long without a new cookie. */
@@ -73,9 +96,6 @@ export interface WatchOptions {
 
 const POLL_MS = 1500;
 const DEADLINE_MS = 10 * 60 * 1000;
-
-/** Cookies that mean "this is the session", as opposed to a device id or cache. */
-const SESSION_COOKIE_PATTERN = /session-token|(^|\.)session$/i;
 
 const cookieKey = (cookie: CookieRecord): string =>
   `${cookie.domain}|${cookie.path}|${cookie.name}`;
@@ -89,6 +109,7 @@ export function watchSafariSession(options: WatchOptions): () => void {
   const { tabId, host, session, onDone } = options;
   const pollMs = options.pollMs ?? POLL_MS;
   const deadlineMs = options.deadlineMs ?? DEADLINE_MS;
+  const sessionPattern = compileSessionCookiePattern(options.sessionCookiePattern);
 
   const log = options.onEvent ?? (() => undefined);
   const baseline = readSafariCookies();
@@ -135,7 +156,7 @@ export function watchSafariSession(options: WatchOptions): () => void {
     // Device ids, cache markers and Cloudflare cookies appear the moment the
     // browser opens the page. They are not a login: importing them would reload
     // the tab, end the watch and miss the session that arrives a minute later.
-    if (!matching.some((cookie) => SESSION_COOKIE_PATTERN.test(cookie.name))) {
+    if (!matching.some((cookie) => sessionPattern.test(cookie.name))) {
       const fresh = matching.filter((cookie) => !known.has(cookieKey(cookie)));
       if (fresh.length > 0 && fresh.length !== lastWaitingLog) {
         lastWaitingLog = fresh.length;
@@ -161,7 +182,7 @@ export function watchSafariSession(options: WatchOptions): () => void {
 
   // Safari is already signed in: take that session instead of waiting for a new
   // login that would never happen.
-  if (baselineMatching.some((cookie) => SESSION_COOKIE_PATTERN.test(cookie.name))) {
+  if (baselineMatching.some((cookie) => sessionPattern.test(cookie.name))) {
     log('Safari already holds a session for this host');
     void writeMatching(session, baselineMatching).then((imported) => {
       log(`imported ${imported} from the existing Safari session`);

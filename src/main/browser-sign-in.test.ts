@@ -2,6 +2,7 @@ import type { CookiesSetDetails, Session } from 'electron';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CookieRecord } from '@shared/cookies';
+import { getProviderConfig } from '@shared/providers';
 import type { BrowserSignInResult } from '@shared/ipc';
 
 vi.mock('./safari-cookies', () => ({ readSafariCookies: vi.fn() }));
@@ -10,6 +11,9 @@ import { importSafariSessionNow, watchSafariSession } from './browser-sign-in';
 import { readSafariCookies } from './safari-cookies';
 
 const read = vi.mocked(readSafariCookies);
+
+/** The rule the app ships for Gemini; Google has no "*session-token" cookie. */
+const GOOGLE_PATTERN = getProviderConfig('gemini').sessionCookiePattern;
 
 interface FakeSession {
   session: Session;
@@ -181,6 +185,35 @@ describe('watchSafariSession', () => {
     await new Promise((resolve) => setTimeout(resolve, 60));
     expect(onDone).not.toHaveBeenCalled();
   });
+
+  it('accepts a provider-specific session cookie (Google) on a child host', async () => {
+    // Gemini's session lives in Google's cookies on .google.com; the ChatGPT
+    // rule would never match them, so the provider declares its own.
+    const googleCookie = (name: string): CookieRecord => ({
+      ...cookie(name),
+      domain: 'google.com'
+    });
+
+    read.mockReturnValueOnce({ cookies: [], path: '/tmp/x' });
+    read.mockReturnValue({ cookies: [googleCookie('NID'), googleCookie('__Secure-1PSID')], path: '/tmp/x' });
+
+    const { session, writes } = fakeSession();
+    const result = waitForResult();
+
+    let stop: () => void = () => undefined;
+    stop = watchSafariSession({
+      tabId: 't',
+      host: 'gemini.google.com',
+      session,
+      sessionCookiePattern: GOOGLE_PATTERN,
+      pollMs: 5,
+      deadlineMs: 500,
+      onDone: (done) => { stop(); result.done(done); }
+    });
+
+    await expect(result.promise).resolves.toMatchObject({ state: 'imported', host: 'gemini.google.com' });
+    expect(writes.some((details) => details.name === '__Secure-1PSID')).toBe(true);
+  });
 });
 
 describe('importSafariSessionNow', () => {
@@ -227,5 +260,25 @@ describe('importSafariSessionNow', () => {
 
     read.mockReturnValue({ cookies: [{ ...cookie('x'), domain: 'example.com' }], path: '/tmp/x' });
     await expect(importSafariSessionNow(session, 'chatgpt.com')).resolves.toMatchObject({ error: 'none' });
+  });
+
+  it('uses the provider rule to decide whether a Google session is a login', async () => {
+    read.mockReturnValue({
+      cookies: [
+        { ...cookie('NID'), domain: 'google.com' },
+        { ...cookie('__Secure-1PSID'), domain: 'google.com' }
+      ],
+      path: '/tmp/x'
+    });
+    const { session } = fakeSession();
+
+    // Without the provider rule the ChatGPT pattern sees no session at all.
+    await expect(importSafariSessionNow(session, 'gemini.google.com')).resolves.toMatchObject({
+      matched: 2,
+      hasSession: false
+    });
+    await expect(
+      importSafariSessionNow(session, 'gemini.google.com', GOOGLE_PATTERN)
+    ).resolves.toMatchObject({ matched: 2, hasSession: true });
   });
 });

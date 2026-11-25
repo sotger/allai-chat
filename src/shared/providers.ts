@@ -1,3 +1,4 @@
+import { GOOGLE_AUTH_COOKIE_NAMES } from './google-auth';
 import type { ProviderConfig, ProviderId } from './types';
 
 /** AI services available in the "add service" dialog. */
@@ -8,7 +9,11 @@ export const PROVIDER_CONFIGS: Record<ProviderId, ProviderConfig> = {
     url: 'https://chatgpt.com',
     color: '#10a37f',
     icon: 'G',
-    newChatUrl: 'https://chatgpt.com/'
+    newChatUrl: 'https://chatgpt.com/',
+    // Opens the same "Continue with Apple" route the dialog uses; the state and
+    // nonce are then Safari's own, not the tab's.
+    passkeySignInUrl: 'https://chatgpt.com/auth/login_with?connection=apple',
+    signInUrl: 'https://chatgpt.com/auth/login'
   },
   claude: {
     id: 'claude',
@@ -16,7 +21,9 @@ export const PROVIDER_CONFIGS: Record<ProviderId, ProviderConfig> = {
     url: 'https://claude.ai',
     color: '#d4a574',
     icon: 'C',
-    newChatUrl: 'https://claude.ai/new'
+    newChatUrl: 'https://claude.ai/new',
+    // Claude's own session cookie; it does not contain "session-token".
+    sessionCookiePattern: '^sessionKey$'
   },
   gemini: {
     id: 'gemini',
@@ -24,7 +31,10 @@ export const PROVIDER_CONFIGS: Record<ProviderId, ProviderConfig> = {
     url: 'https://gemini.google.com/app',
     color: '#4ecdc4',
     icon: 'Ge',
-    newChatUrl: 'https://gemini.google.com/app'
+    newChatUrl: 'https://gemini.google.com/app',
+    // Gemini is signed in through Google's own session cookies on .google.com,
+    // which also apply to gemini.google.com (parent-domain match).
+    sessionCookiePattern: `^(?:${GOOGLE_AUTH_COOKIE_NAMES.join('|')})$`
   },
   copilot: {
     id: 'copilot',

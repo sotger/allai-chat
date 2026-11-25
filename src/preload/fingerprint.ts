@@ -150,8 +150,8 @@ export function buildFingerprintScript(data: FingerprintData): string {
   // WebAuthn: Electron has no UI for passkeys or security keys, so a
   // publicKey request never settles — the site stays on a spinner forever
   // (Apple's "Sign in with iPhone" is the reported case). Reject such requests
-  // so the page can fall back, and explain why once per page. When a platform
-  // authenticator is configured (signed builds), the request is passed through.
+  // so the page can fall back. When a platform authenticator is configured
+  // (signed builds), the request is passed through.
   const platformAuthenticatorAvailable = () => new Promise((resolve) => {
     try {
       if (!window.PublicKeyCredential || !PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) {
@@ -177,9 +177,7 @@ export function buildFingerprintScript(data: FingerprintData): string {
       'font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
       'box-shadow:0 8px 24px rgba(0,0,0,.35)', 'box-sizing:border-box'
     ].join(';');
-    notice.textContent = D.platform === 'darwin'
-      ? 'Passkeys cannot run inside this app. Opening this sign-in in Safari — finish there and the session comes back to this tab.'
-      : 'Passkeys are not available in this app. Use your password, or import cookies from a browser (tab context menu → Import cookies…).';
+    notice.textContent = 'Passkeys are not available in this app. Use your password, or import cookies from a browser (tab context menu → Import cookies…).';
 
     const close = document.createElement('button');
     close.textContent = '×';
@@ -214,7 +212,10 @@ export function buildFingerprintScript(data: FingerprintData): string {
       return platformAuthenticatorAvailable().then((available) => {
         if (available) return original(options);
         if (options.mediation !== 'conditional') {
-          showPasskeyNotice();
+          // On macOS the app opens Safari itself, so a banner over the page
+          // would only compete with the browser switch. Elsewhere it is the
+          // only explanation the user gets.
+          if (D.platform !== 'darwin') showPasskeyNotice();
           reportPasskeyBlocked();
         }
         console.warn('[ALLAI-CHAT] passkey request blocked: this app cannot service WebAuthn authenticators');

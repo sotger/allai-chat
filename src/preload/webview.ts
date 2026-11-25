@@ -2,6 +2,12 @@ import { ipcRenderer, webFrame } from 'electron';
 
 import { buildFingerprintScript } from './fingerprint';
 
+// Keep in sync with `IPC_CHANNELS.passkeyBlocked` in src/shared/ipc.ts. Imported
+// as a literal on purpose: importing the shared module here made Rollup split a
+// `chunks/ipc-*.cjs` file shared with preload/index.cjs, and a sandboxed preload
+// cannot require a chunk next to it inside the asar.
+const PASSKEY_BLOCKED_CHANNEL = 'allai:passkey-blocked';
+
 const chromeVersion = process.versions.chrome || '138.0.0.0';
 const chromeMajor = chromeVersion.split('.')[0] || chromeVersion;
 const chromeUserAgent = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36`;
@@ -31,13 +37,14 @@ const fingerprintScript = buildFingerprintScript({
 
 // The fingerprint script runs in the page's main world, which cannot reach
 // Electron APIs. It flags a blocked passkey request with a DOM attribute; this
-// isolated world watches for it and tells the app to hand the sign-in off to a
-// real browser.
+// isolated world watches for it and asks the main process to hand the sign-in
+// over to a real browser. Main maps the sender's session back to a tab, so this
+// also works in an OAuth popup, which has no <webview> host to send to.
 const passkeyGuard = new MutationObserver(() => {
   const root = document.documentElement;
   if (!root || root.getAttribute('data-allai-passkey-blocked') !== '1') return;
   root.removeAttribute('data-allai-passkey-blocked');
-  ipcRenderer.sendToHost('allai:passkey-blocked');
+  ipcRenderer.send(PASSKEY_BLOCKED_CHANNEL);
 });
 passkeyGuard.observe(document, {
   attributes: true,

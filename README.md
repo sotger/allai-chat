@@ -46,15 +46,17 @@ is still waiting to be read.
   popups that share the tab's session, so OAuth callbacks and `window.opener`
   messaging work. Grok, Claude and Clerk-based services return to the app
   correctly after login.
-- **Sign in with cookies when a service only offers passkeys** — Electron cannot
-  complete WebAuthn, so on macOS a passkey button hands the sign-in to Safari:
-  an existing Safari session is taken over instantly, otherwise the app opens
-  the service there and watches Safari's cookie store until a *session* cookie
-  appears (device ids and cache cookies do not count), then takes the session
-  over, brings the tab back to the service and pulls the app to the front
-  (needs Full Disk Access). **Right-click a tab → Import cookies…** does the same
-  manually, or on any platform: paste a Netscape `cookies.txt` or a `Cookie:`
-  header. Only cookies for that tab's own service are written.
+- **Browser sign-in when the site cannot finish it** — Electron cannot complete
+  WebAuthn, and some services bounce the tab to a sign-in provider that refuses
+  to run there. On macOS both cases hand the login to Safari: an existing Safari
+  session is taken over instantly, otherwise the app opens the service there and
+  watches Safari's cookie store until a *session* cookie appears (device ids and
+  cache cookies do not count), takes the session over, closes the browser tab it
+  opened and pulls the app to the front. Needs **Full Disk Access**; the optional
+  **Control Safari** permission lets the app press the login button there too.
+  **Right-click a tab → Import cookies…** does the same manually, or on any
+  platform: paste a Netscape `cookies.txt` or a `Cookie:` header. Only cookies
+  for that tab's own service are written.
 - **One Google sign-in for all services** — optionally store a Google session
   once and reuse it in new tabs, while every service keeps its own cookies.
   Useful when the same Google account is used everywhere. Can be disabled in
@@ -209,7 +211,10 @@ x64), Windows (x64) and Linux (x64).
 
 1. Click **+ Add service** (or `Cmd/Ctrl+T`) and pick a provider.
 2. Sign in as you normally would on that website — for example
-   **Continue with Google**.
+   **Continue with Google**. When the site hands the login to a provider the app
+   cannot run, macOS finishes it in Safari and brings the session (and you) back
+   automatically; the dialog for it appears on the first launch if a permission
+   is missing.
 3. Click another tab to switch services. Each tab keeps its own login.
 4. To use a second account, add the same provider again; it gets its own session
    and is labelled `ChatGPT 2`, `Gemini 2`, etc.
@@ -227,6 +232,26 @@ shared Google session again. Password, email-code and other login methods are
 always per-tab and are never shared. Passkeys do not work inside Electron (see
 [Known limitations](#known-limitations)); use **Import cookies…** when a service
 offers nothing else.
+
+### Permissions
+
+Two macOS permissions belong to browser sign-in. The app checks both when it
+starts and shows a dialog with a checklist, so nothing is missing halfway through
+a login:
+
+| Permission | Needed for | If it is missing |
+| --- | --- | --- |
+| **Full Disk Access** | Reading the session cookie Safari wrote for the service | The handoff cannot take the session over; the dialog has a button that opens the right pane |
+| **Control Safari** (Automation) | Pressing “Sign in” / “Continue with Google” in the browser, and closing the tab it opened | Optional — you click in Safari yourself |
+
+Safari additionally needs **Develop → Allow JavaScript from Apple Events**
+(Safari → Settings → Advanced → *Show features for web developers* first). Without
+it the app can still open Safari and take the session back, but it cannot press
+the button for you.
+
+Both grants are tied to the app signature, so a rebuilt or updated app may have
+to be added again. Nothing else in the app needs them: the history index, search
+and sync work without any permission.
 
 ### Search across services
 

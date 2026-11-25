@@ -86,13 +86,13 @@ function runScript(platformAuthenticatorAvailable: boolean, platform = 'darwin')
 const publicKeyRequest = { publicKey: { challenge: new Uint8Array(16) } };
 
 describe('guest WebAuthn guard', () => {
-  it('rejects passkey requests when no platform authenticator is configured', async () => {
+  it('rejects passkey requests and hands the sign-in to the app without a banner', async () => {
     const { credentials, notices, documentAttributes } = runScript(false);
 
     await expect(credentials.get(publicKeyRequest)).rejects.toMatchObject({ name: 'NotAllowedError' });
     await expect(credentials.create(publicKeyRequest)).rejects.toMatchObject({ name: 'NotAllowedError' });
-    expect(notices.has('allai-passkey-notice')).toBe(true);
-    expect(notices.get('allai-passkey-notice')?.textContent).toContain('Opening this sign-in in Safari');
+    // macOS opens Safari itself, so the page stays clean.
+    expect(notices.size).toBe(0);
     // The preload uses this attribute to tell the app to open Safari.
     expect(documentAttributes.get('data-allai-passkey-blocked')).toBe('1');
   });

@@ -1,4 +1,4 @@
-import type { AddTabInput, DownloadRecord } from '@shared/ipc';
+import type { AddTabInput, DownloadRecord, PermissionStatus } from '@shared/ipc';
 import type {
   HistoryProgress,
   HistoryQueueSnapshot,
@@ -37,7 +37,8 @@ export function defaultPreferences(): Preferences {
     historyIndexEnabled: true,
     historyBackfillEnabled: false,
     syncFolder: '',
-    syncEnabled: false
+    syncEnabled: false,
+    fullDiskAccessNoticeHidden: false
   };
 }
 
@@ -59,6 +60,9 @@ function initialQueueOpen(): boolean {
 
 interface AppStore {
   tabs: ServiceTab[];
+  /** macOS permission state for the Safari handoff; undefined until fetched. */
+  permissionStatus?: PermissionStatus;
+  permissionDialogOpen: boolean;
   activeTabId: string | null;
   runtime: Record<string, TabRuntime>;
   isReady: boolean;
@@ -127,6 +131,8 @@ interface AppStore {
   syncGoogleSignIn: () => Promise<void>;
   setError: (message?: string) => void;
   setNotice: (message?: string) => void;
+  setPermissionStatus: (status: PermissionStatus) => void;
+  setPermissionDialogOpen: (open: boolean) => void;
 }
 
 async function runAction(set: (partial: Partial<AppStore>) => void, action: () => Promise<void>): Promise<void> {
@@ -142,6 +148,8 @@ async function runAction(set: (partial: Partial<AppStore>) => void, action: () =
 
 export const useAppStore = create<AppStore>((set, get) => ({
   tabs: [],
+  permissionStatus: undefined,
+  permissionDialogOpen: false,
   activeTabId: null,
   runtime: {},
   isReady: false,
@@ -376,5 +384,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   setError: (message) => set({ error: message }),
-  setNotice: (message) => set({ notice: message })
+  setNotice: (message) => set({ notice: message }),
+  setPermissionStatus: (status) => set({ permissionStatus: status }),
+  setPermissionDialogOpen: (open) => set({ permissionDialogOpen: open })
 }));

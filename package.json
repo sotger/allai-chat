@@ -82,7 +82,10 @@
         {
           "target": "zip"
         }
-      ]
+      ],
+      "extendInfo": {
+        "NSAppleEventsUsageDescription": "ALLAI-CHAT uses Safari to finish a sign-in that cannot complete inside the app, and brings the session back. It only drives the service page you just asked to sign in to."
+      }
     },
     "dmg": {
       "title": "${productName} ${version}",
