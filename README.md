@@ -57,9 +57,13 @@ is still waiting to be read.
   **Right-click a tab → Import cookies…** does the same manually, or on any
   platform: paste a Netscape `cookies.txt` or a `Cookie:` header. Only cookies
   for that tab's own service are written.
-- **One Google sign-in for all services** — optionally store a Google session
-  once and reuse it in new tabs, while every service keeps its own cookies.
-  Useful when the same Google account is used everywhere. Can be disabled in
+- **One Google sign-in for all services** — a Google session finished in the
+  browser is kept in the app's own profile and reused in new tabs, so the next
+  service signs in without another trip to Safari. It is one Google login, like
+  one browser profile: open **Settings → Google sign-in → Google accounts…** to
+  add a second or third account there and Google will offer its account chooser.
+  A login that used a different account in Safari does not overwrite what is
+  stored. Every service still keeps its own cookies. Can be disabled in
   **Settings → Google sign-in**.
 - **Downloads** — files go to `~/Downloads` by default, or to a folder chosen in
   **Settings → Downloads**. A browser-style download button in the top bar shows
@@ -235,9 +239,11 @@ offers nothing else.
 
 ### Permissions
 
-Two macOS permissions belong to browser sign-in. The app checks both when it
-starts and shows a dialog with a checklist, so nothing is missing halfway through
-a login:
+Two macOS permissions belong to browser sign-in. **Full Disk Access** is the only
+one that is required; the app checks it when it starts and shows a dialog with a
+checklist, so nothing is missing halfway through a login. The optional Safari
+control is checked only when you ask for it, because the request itself makes
+macOS show its Automation prompt:
 
 | Permission | Needed for | If it is missing |
 | --- | --- | --- |

@@ -1,9 +1,11 @@
 import type { Session } from 'electron';
 
 import { filterCookiesForHost, type CookieRecord } from '@shared/cookies';
+import { GOOGLE_SESSION_PATTERN } from '@shared/google-auth';
 import type { BrowserSignInResult } from '@shared/ipc';
 
 import { writeImportedCookie } from './cookie-import';
+import { fingerprintGoogleSession } from './google-auth';
 import { readSafariCookies } from './safari-cookies';
 
 /**
@@ -79,6 +81,43 @@ export async function importSafariSessionNow(
   return { imported, matched: matching.length, host, hasSession };
 }
 
+function isGoogleHost(domain: string | undefined): boolean {
+  const host = (domain ?? '').replace(/^\./, '').toLowerCase();
+  return host === 'google.com' || host.endsWith('.google.com');
+}
+
+export interface SafariGoogleSession {
+  /** Every google.com cookie Safari holds, in store order. */
+  cookies: CookieRecord[];
+  /** Fingerprint of the login behind them, when one is signed in. */
+  session?: string;
+}
+
+/**
+ * Reads the Google session Safari currently holds, without writing anything.
+ *
+ * The entire jar is returned on purpose: Google keeps the extra accounts
+ * server-side behind this one login, so a partial copy would lose them and the
+ * account chooser would disappear. An empty list means Safari is not signed in
+ * to Google — or the store could not be read at all.
+ */
+export function readSafariGoogleSession(): SafariGoogleSession {
+  const read = readSafariCookies();
+  if (read.error) return { cookies: [] };
+
+  const google = read.cookies.filter((cookie) => isGoogleHost(cookie.domain));
+  const pattern = compileSessionCookiePattern(GOOGLE_SESSION_PATTERN);
+  if (!google.some((cookie) => pattern.test(cookie.name))) return { cookies: [] };
+
+  return { cookies: google, session: fingerprintGoogleSession(google) };
+}
+
+/** Writes a Google cookie set into the app's own vault partition. */
+export async function importSafariGoogleSession(vault: Session, cookies: CookieRecord[]): Promise<number> {
+  if (cookies.length === 0) return 0;
+  return writeMatching(vault, cookies);
+}
+
 export interface WatchOptions {
   tabId: string;
   host: string;
@@ -101,6 +140,16 @@ const cookieKey = (cookie: CookieRecord): string =>
   `${cookie.domain}|${cookie.path}|${cookie.name}`;
 
 /**
+ * ` (name, name, …)` for the diagnostics log. Cookie names only — values are
+ * never written anywhere.
+ */
+function describeCookieNames(cookies: CookieRecord[]): string {
+  if (cookies.length === 0) return '';
+  const names = [...new Set(cookies.map((cookie) => cookie.name))].slice(0, 12);
+  return ` (${names.join(', ')})`;
+}
+
+/**
  * Starts watching for a new session. Returns a cancel function; the watcher
  * stops itself after the first successful import, on a missing Full Disk Access
  * grant, or when the deadline passes.
@@ -120,7 +169,10 @@ export function watchSafariSession(options: WatchOptions): () => void {
   }
 
   const baselineMatching = filterCookiesForHost(baseline.cookies, host);
-  log(`start host=${host} baseline=${baselineMatching.length} (${baseline.error ?? 'ok'})`);
+  log(
+    `start host=${host} baseline=${baselineMatching.length} (${baseline.error ?? 'ok'})`
+    + describeCookieNames(baselineMatching)
+  );
 
   // Cookies that existed before the browser login must not count as new ones.
   const known = new Set(baselineMatching.map(cookieKey));
@@ -160,7 +212,9 @@ export function watchSafariSession(options: WatchOptions): () => void {
       const fresh = matching.filter((cookie) => !known.has(cookieKey(cookie)));
       if (fresh.length > 0 && fresh.length !== lastWaitingLog) {
         lastWaitingLog = fresh.length;
-        log(`waiting: ${fresh.length} new cookie(s), no session yet`);
+        // Names only, never values: this is what makes a missing per-provider
+        // session rule visible in the log instead of guessing at it.
+        log(`waiting: ${fresh.length} new cookie(s), no session yet${describeCookieNames(fresh)}`);
       }
       return;
     }

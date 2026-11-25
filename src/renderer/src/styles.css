@@ -953,6 +953,13 @@ button {
   line-height: 1.5;
 }
 
+.settings-status {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+}
+
 .sync-suggestions {
   flex-wrap: wrap;
   margin-top: 8px;
@@ -2266,12 +2273,6 @@ button {
   flex: 0 0 auto;
   border-radius: 50%;
   background: var(--alarm-dot);
-  animation: alarm-blink 2.2s ease-in-out infinite;
-}
-
-@keyframes alarm-blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
 }
 
 .permission-alarm-text {
@@ -2352,8 +2353,6 @@ button {
   fill: var(--disk-case);
   stroke: var(--disk-stroke);
   stroke-width: 2;
-  transform-origin: 75px 54px;
-  animation: disk-float 3.6s ease-in-out infinite;
 }
 
 .disk-plate {
@@ -2381,24 +2380,6 @@ button {
 
 .disk-platter {
   transform-origin: 75px 52px;
-  animation: disk-spin 2.8s linear infinite;
-}
-
-@keyframes disk-spin {
-  to { transform: rotate(360deg); }
-}
-
-@keyframes disk-float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-3px); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .disk-platter,
-  .disk-case,
-  .permission-alarm-dot {
-    animation: none;
-  }
 }
 
 .permission-granted {
@@ -2419,12 +2400,6 @@ button {
   color: var(--granted-text);
   font-size: 32px;
   font-weight: 700;
-  animation: granted-pop 0.45s ease-out;
-}
-
-@keyframes granted-pop {
-  from { transform: scale(0.6); opacity: 0; }
-  to { transform: scale(1); opacity: 1; }
 }
 
 .permission-granted h2 {

@@ -50,6 +50,7 @@ const api: AllaiApi = {
   importHistory: () => ipcRenderer.invoke(IPC_CHANNELS.importHistory),
   openGoogleSignIn: () => ipcRenderer.invoke(IPC_CHANNELS.openGoogleSignIn),
   syncGoogleSignIn: () => ipcRenderer.invoke(IPC_CHANNELS.syncGoogleSignIn),
+  getGoogleVaultState: () => ipcRenderer.invoke(IPC_CHANNELS.getGoogleVaultState),
   getDownloads: () => ipcRenderer.invoke(IPC_CHANNELS.getDownloads),
   cancelDownload: (id) => ipcRenderer.invoke(IPC_CHANNELS.cancelDownload, id),
   showDownload: (id) => ipcRenderer.invoke(IPC_CHANNELS.showDownload, id),

@@ -20,3 +20,9 @@ export const GOOGLE_AUTH_COOKIE_NAMES = [
 export function isGoogleAuthCookieName(name: string): boolean {
   return GOOGLE_AUTH_COOKIE_NAMES.includes(name);
 }
+
+/**
+ * The same rule as a regex source, for callers that take a pattern string: the
+ * per-provider session-cookie check and the Safari import.
+ */
+export const GOOGLE_SESSION_PATTERN = `^(${GOOGLE_AUTH_COOKIE_NAMES.join('|')})$`;

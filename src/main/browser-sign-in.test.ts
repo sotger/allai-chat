@@ -7,7 +7,7 @@ import type { BrowserSignInResult } from '@shared/ipc';
 
 vi.mock('./safari-cookies', () => ({ readSafariCookies: vi.fn() }));
 
-import { importSafariSessionNow, watchSafariSession } from './browser-sign-in';
+import { importSafariGoogleSession, importSafariSessionNow, readSafariGoogleSession, watchSafariSession } from './browser-sign-in';
 import { readSafariCookies } from './safari-cookies';
 
 const read = vi.mocked(readSafariCookies);
@@ -280,5 +280,73 @@ describe('importSafariSessionNow', () => {
     await expect(
       importSafariSessionNow(session, 'gemini.google.com', GOOGLE_PATTERN)
     ).resolves.toMatchObject({ matched: 2, hasSession: true });
+  });
+});
+
+describe('readSafariGoogleSession', () => {
+  beforeEach(() => {
+    read.mockReset();
+  });
+
+  it('keeps every Google cookie, so extra accounts survive the copy', () => {
+    read.mockReturnValue({
+      cookies: [
+        { ...cookie('SID'), domain: '.google.com' },
+        { ...cookie('NID'), domain: '.google.com' },
+        { ...cookie('session-token'), domain: 'chatgpt.com' }
+      ],
+      path: '/tmp/x'
+    });
+
+    const session = readSafariGoogleSession();
+    expect(session.cookies.map((item) => item.name).sort()).toEqual(['NID', 'SID']);
+    expect(session.session).toBeTruthy();
+  });
+
+  it('reports nothing when Safari has no Google session or the store is unreadable', () => {
+    read.mockReturnValue({ cookies: [{ ...cookie('NID'), domain: '.google.com' }], path: '/tmp/x' });
+    expect(readSafariGoogleSession()).toEqual({ cookies: [] });
+
+    read.mockReturnValue({ cookies: [], error: 'denied' });
+    expect(readSafariGoogleSession()).toEqual({ cookies: [] });
+  });
+
+  // Adding a second account to one Google login keeps the session cookie, so the
+  // fingerprint must stay the same; signing in as somebody else changes it.
+  it('fingerprints the login rather than the cookie list', () => {
+    read.mockReturnValue({
+      cookies: [{ ...cookie('SID', 'a'), domain: '.google.com' }],
+      path: '/tmp/x'
+    });
+    const alone = readSafariGoogleSession().session;
+
+    read.mockReturnValue({
+      cookies: [
+        { ...cookie('SID', 'a'), domain: '.google.com' },
+        { ...cookie('NID'), domain: '.google.com' }
+      ],
+      path: '/tmp/x'
+    });
+    expect(readSafariGoogleSession().session).toBe(alone);
+
+    read.mockReturnValue({
+      cookies: [{ ...cookie('SID', 'b'), domain: '.google.com' }],
+      path: '/tmp/x'
+    });
+    expect(readSafariGoogleSession().session).not.toBe(alone);
+  });
+});
+
+describe('importSafariGoogleSession', () => {
+  it('writes exactly the cookies it is given', async () => {
+    const { session, writes } = fakeSession();
+
+    await expect(
+      importSafariGoogleSession(session, [{ ...cookie('SID'), domain: '.google.com' }])
+    ).resolves.toBe(1);
+    expect(writes.map((write) => write.name)).toEqual(['SID']);
+
+    await expect(importSafariGoogleSession(session, [])).resolves.toBe(0);
+    expect(writes).toHaveLength(1);
   });
 });

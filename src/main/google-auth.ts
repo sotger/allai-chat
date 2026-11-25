@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import type { Cookie, CookiesSetDetails, Session } from 'electron';
 
 import { isGoogleAuthCookieName } from '@shared/google-auth';
@@ -19,22 +21,19 @@ function cookieUrl(cookie: Cookie): string | undefined {
 
 export async function readGoogleCookies(ses: Session): Promise<Cookie[]> {
   try {
-    // `domain: 'google.com'` covers the domain-wide session cookies. The URL
-    // filters also pick up host-only cookies on the login hosts themselves.
-    const groups = await Promise.all([
-      ses.cookies.get({ domain: 'google.com' }),
-      ses.cookies.get({ url: 'https://accounts.google.com/' }),
-      ses.cookies.get({ url: 'https://www.google.com/' })
-    ]);
-    const merged = new Map<string, Cookie>();
-    for (const cookie of groups.flat()) {
-      const key = `${cookie.domain ?? ''}|${cookie.path ?? ''}|${cookie.name}`;
-      merged.set(key, cookie);
-    }
-    return [...merged.values()];
+    // Every Google host, not just the three that carry the login: Google keeps
+    // extra accounts and per-property state spread over its subdomains, and a
+    // partial copy loses the account chooser.
+    const all = await ses.cookies.get({});
+    return all.filter((cookie) => isGoogleDomain(cookie.domain));
   } catch {
     return [];
   }
+}
+
+function isGoogleDomain(domain: string | undefined): boolean {
+  const host = (domain ?? '').replace(/^\./, '').toLowerCase();
+  return host === 'google.com' || host.endsWith('.google.com');
 }
 
 export function isSignedInToGoogle(cookies: Cookie[]): boolean {
@@ -47,6 +46,29 @@ export function isSignedInToGoogle(cookies: Cookie[]): boolean {
 
 export async function hasGoogleSession(ses: Session): Promise<boolean> {
   return isSignedInToGoogle(await readGoogleCookies(ses));
+}
+
+/** Cookies that identify the login itself, most stable first. */
+const SESSION_COOKIE_NAMES = ['SID', '__Secure-1PSID', '__Secure-3PSID'];
+
+/**
+ * A short, non-reversible fingerprint of the Google login behind a cookie set.
+ *
+ * Google keeps the additional accounts server-side, keyed by this one session
+ * cookie, so adding or removing an account does not change the value; signing in
+ * as somebody else does. That is exactly the question the vault guard asks.
+ * Returns undefined when no session cookie is present.
+ */
+export function fingerprintGoogleSession(
+  cookies: Array<Pick<Cookie, 'name' | 'value'>>
+): string | undefined {
+  for (const name of SESSION_COOKIE_NAMES) {
+    const match = cookies.find((cookie) => cookie.name === name);
+    if (match?.value) {
+      return createHash('sha256').update(match.value).digest('hex').slice(0, 16);
+    }
+  }
+  return undefined;
 }
 
 /** Writes one cookie into another session. Returns false for unsettable cookies. */

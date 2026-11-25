@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { UI_FONT_SIZES } from '@shared/preferences';
+import type { GoogleVaultState } from '@shared/ipc';
 import type { DetectedSyncFolder } from '@shared/sync';
 import type { ThemePreference } from '@shared/types';
 import { useAppStore } from '../store';
@@ -39,11 +40,28 @@ export function SettingsDialog() {
   const isBusy = useAppStore((s) => s.isBusy);
 
   const [syncFolders, setSyncFolders] = useState<DetectedSyncFolder[]>([]);
+  const [googleVault, setGoogleVault] = useState<GoogleVaultState>();
 
   useEffect(() => {
     if (!open) return;
     void window.allai.getSyncFolders().then(setSyncFolders).catch(() => setSyncFolders([]));
   }, [open]);
+
+  const refreshGoogleVault = (): void => {
+    void window.allai.getGoogleVaultState().then(setGoogleVault).catch(() => setGoogleVault(undefined));
+  };
+
+  useEffect(() => {
+    if (open) refreshGoogleVault();
+  }, [open]);
+
+  // The vault is filled by a Safari handoff or when the Google window closes.
+  useEffect(() => window.allai.onGoogleSignInDone(() => refreshGoogleVault()), []);
+
+  const applyGoogleToServices = async (): Promise<void> => {
+    await syncGoogleSignIn().catch(() => undefined);
+    refreshGoogleVault();
+  };
 
   if (!open) return null;
 
@@ -302,21 +320,32 @@ export function SettingsDialog() {
             </span>
           </label>
           <div className="settings-row">
+            <span className="settings-status">
+              {googleVault === undefined
+                ? 'Checking…'
+                : googleVault.saved
+                  ? `Saved on this Mac — ${googleVault.cookies} Google cookies`
+                  : 'No Google session saved yet'}
+            </span>
+          </div>
+          <div className="settings-row">
             <button className="secondary-button" onClick={() => void openGoogleSignIn()}>
-              Sign in to Google once…
+              Google accounts…
             </button>
             <button
               className="secondary-button"
-              onClick={() => void syncGoogleSignIn()}
-              disabled={!preferences.reuseGoogleSignIn}
+              onClick={() => void applyGoogleToServices()}
+              disabled={!preferences.reuseGoogleSignIn || !googleVault?.saved}
             >
               Apply to services
             </button>
           </div>
           <p className="muted settings-hint">
-            Google does not allow completing another service's OAuth flow in your system
-            browser: the callback has to return to the service itself. This keeps the
-            sign-in inside the app and asks for the password only once.
+            This is one Google login, like one browser profile: sign in several accounts with
+            <strong> Google accounts…</strong> and Google will offer the chooser to any service
+            that asks. A login that used a different account in Safari replaces nothing here —
+            it stays in that tab. Each service keeps its own cookies; <strong>Reset login
+            info</strong> opts one tab out of the sharing.
           </p>
         </section>
 

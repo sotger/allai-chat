@@ -1,27 +1,26 @@
 import { useEffect } from 'react';
+import type { SafariControlAccess, SafariCookieAccess } from '@shared/ipc';
 
 import { useAppStore } from '../store';
 
+type FdaState = SafariCookieAccess | 'unknown';
+
 /**
- * Slim strip under the top bar while a permission the browser handoff needs is
- * missing. Full Disk Access is required; Safari control only makes the flow
- * hands-free.
+ * Slim strip under the top bar while Full Disk Access is missing. That grant is
+ * the only thing the browser handoff needs, so this strip never appears for the
+ * optional Safari control.
  */
 export function PermissionAlarm() {
   const status = useAppStore((s) => s.permissionStatus);
   const setDialogOpen = useAppStore((s) => s.setPermissionDialogOpen);
-  const fdaMissing = status?.safariCookies === 'denied';
-  const controlMissing = status?.safariControl === 'denied';
 
-  if (!fdaMissing && !controlMissing) return null;
+  if (status?.safariCookies !== 'denied') return null;
 
   return (
     <div className="permission-alarm" role="status">
       <span className="permission-alarm-dot" aria-hidden="true" />
       <span className="permission-alarm-text">
-        {fdaMissing
-          ? 'Browser sign-in is off — macOS has not given ALLAI-CHAT Full Disk Access.'
-          : 'Browser sign-in works, but ALLAI-CHAT is not allowed to control Safari, so the login is not completed for you.'}
+        Browser sign-in is off — macOS has not given ALLAI-CHAT Full Disk Access.
       </span>
       <button className="permission-alarm-action" onClick={() => setDialogOpen(true)}>
         Fix…
@@ -30,7 +29,7 @@ export function PermissionAlarm() {
   );
 }
 
-function DiskAnimation() {
+function DiskIllustration() {
   return (
     <div className="permission-disk" aria-hidden="true">
       <svg viewBox="0 0 150 112" width="160" height="120">
@@ -48,17 +47,54 @@ function DiskAnimation() {
   );
 }
 
-const DOT = { ok: 'good', warn: 'bad', idle: 'idle' } as const;
+type PillState = 'ok' | 'warn' | 'idle' | 'optional';
 
-function StatusPill({ state }: { state: 'ok' | 'warn' | 'idle' }) {
-  const label = state === 'ok' ? 'Allowed' : state === 'warn' ? 'Missing' : 'Not checked';
-  return <span className={`permission-pill ${DOT[state]}`}>{label}</span>;
+const PILL_TONE = { ok: 'good', warn: 'bad', idle: 'idle', optional: 'idle' } as const;
+
+function StatusPill({ state }: { state: PillState }) {
+  const label =
+    state === 'ok' ? 'Allowed'
+      : state === 'warn' ? 'Missing'
+        : state === 'optional' ? 'Optional'
+          : 'Not checked';
+  return <span className={`permission-pill ${PILL_TONE[state]}`}>{label}</span>;
+}
+
+function fdaHint(state: FdaState): string {
+  switch (state) {
+    case 'denied':
+      return 'macOS blocked the read. Turn ALLAI-CHAT on under Privacy & Security → Full Disk Access, then press Check again.';
+    case 'unreadable':
+      return 'Safari’s cookie store could not be read. Sign in once in Safari to rewrite it, then press Check again.';
+    case 'missing':
+      return 'Safari has not created a cookie store on this Mac yet, so the grant cannot be checked. Open Safari once, then press Check again.';
+    case 'ok':
+      return 'Lets the app read the session Safari created. Required.';
+    default:
+      return 'Lets the app read the session Safari created. Required.';
+  }
+}
+
+function controlHint(state: SafariControlAccess): string {
+  switch (state) {
+    case 'ok':
+      return 'The app may close the Safari tab it opened for you.';
+    case 'no-js':
+      return 'macOS allows control, Safari blocks scripting. Safari → Develop → Allow JavaScript from Apple Events, then press Try again.';
+    case 'denied':
+      return 'macOS refused. Sign-in still works; the Safari tab is simply left open.';
+    case 'unsupported':
+      return 'Not available on this system.';
+    default:
+      return 'Optional. Lets the app close the Safari tab once the session arrives, and press the sign-in button for you.';
+  }
 }
 
 /**
  * macOS offers no API to request these permissions: the app can only explain
- * them and send the user to the right System Settings pane. This dialog is the
- * one place that shows every check, so it is opened at startup.
+ * them and send the user to the right System Settings pane. Full Disk Access is
+ * required; Apple Events are optional and are only ever probed on an explicit
+ * click, because the probe itself is what makes macOS show its prompt.
  */
 export function PermissionDialog() {
   const open = useAppStore((s) => s.permissionDialogOpen);
@@ -69,9 +105,9 @@ export function PermissionDialog() {
   const status = useAppStore((s) => s.permissionStatus);
   const setStatus = useAppStore((s) => s.setPermissionStatus);
 
-  const fda = status?.safariCookies ?? 'unknown';
-  const control = status?.safariControl ?? 'unknown';
-  const allOk = fda === 'ok' && control === 'ok';
+  const fda: FdaState = status?.safariCookies ?? 'unknown';
+  const control: SafariControlAccess = status?.safariControl ?? 'unknown';
+  const allOk = fda === 'ok';
 
   // Poll while the dialog is open: the user is in System Settings and the state
   // should update without a restart.
@@ -90,32 +126,41 @@ export function PermissionDialog() {
     if (!open || !allOk) return;
     const timer = setTimeout(() => {
       setOpen(false);
-      setNotice('Permissions are set — browser sign-in is fully automatic now.');
+      setNotice('Full Disk Access is granted — browser sign-in can take the session from Safari now.');
     }, 1800);
     return () => clearTimeout(timer);
   }, [open, allOk, setOpen, setNotice]);
 
   if (!open) return null;
 
+  /** The only place that sends the Apple Event, and only because the user asked. */
   const requestControl = async (): Promise<void> => {
     const next = await window.allai.requestSafariControl().catch(() => undefined);
     if (!next) return;
     setStatus(next);
     if (next.safariControl === 'ok') {
-      setNotice('Safari control is on — ALLAI-CHAT can press the login button for you.');
+      setNotice('Safari control is on — ALLAI-CHAT can close the Safari tab for you.');
     } else if (next.safariControl === 'no-js') {
       // Automation is already granted; what is missing is Safari's own switch.
       setNotice('macOS allowed control. Safari still blocks scripting: Develop → Allow JavaScript from Apple Events.');
+    } else if (next.safariControl === 'denied') {
+      setNotice('macOS did not allow controlling Safari. Sign-in works without it.');
     } else {
-      setNotice('macOS did not allow controlling Safari. Enable ALLAI-CHAT under Privacy & Security → Automation.');
+      setNotice('macOS did not answer the Automation request — sign-in works without it.');
     }
   };
 
   const recheck = async (): Promise<void> => {
     const next = await window.allai.getPermissionStatus().catch(() => undefined);
     if (next) setStatus(next);
-    await requestControl();
   };
+
+  const openSafari = async (): Promise<void> => {
+    await window.allai.openSafari().catch(() => undefined);
+    setNotice('Safari opened. Sign in once there, then press Check again.');
+  };
+
+  const fdaPill: PillState = fda === 'ok' ? 'ok' : fda === 'denied' ? 'warn' : 'idle';
 
   return (
     <div className="modal-backdrop" onMouseDown={() => setOpen(false)}>
@@ -125,30 +170,34 @@ export function PermissionDialog() {
             <div className="permission-granted-mark" aria-hidden="true">✓</div>
             <h2>All set</h2>
             <p className="permission-lead">
-              Browser sign-in can now finish in Safari and come back on its own. Closing this…
+              ALLAI-CHAT can read the session Safari creates. Closing this…
             </p>
           </div>
         ) : (
           <>
-            <DiskAnimation />
-            <h2>Two permissions make sign-in hands-free</h2>
+            <DiskIllustration />
+            <h2>Full Disk Access makes sign-in hands-free</h2>
             <p className="permission-lead">
               Passkey and Google sign-in cannot finish inside this app. ALLAI-CHAT opens the
-              service in Safari, presses the login button for you, and takes the session back.
+              service in Safari and takes the session back. Only Full Disk Access is required
+              for that.
             </p>
 
             <div className="permission-list">
               <div className="permission-row">
                 <div className="permission-row-main">
                   <div className="permission-row-title">Full Disk Access</div>
-                  <div className="permission-row-hint">
-                    Lets the app read the session Safari created. Required.
-                  </div>
+                  <div className="permission-row-hint">{fdaHint(fda)}</div>
                 </div>
-                <StatusPill state={fda === 'ok' ? 'ok' : 'warn'} />
-                {fda !== 'ok' && (
+                <StatusPill state={fdaPill} />
+                {fda === 'denied' && (
                   <button className="secondary-button" onClick={() => void window.allai.openFullDiskAccessSettings()}>
                     Open Settings
+                  </button>
+                )}
+                {(fda === 'missing' || fda === 'unreadable') && (
+                  <button className="secondary-button" onClick={() => void openSafari()}>
+                    Open Safari
                   </button>
                 )}
               </div>
@@ -156,23 +205,12 @@ export function PermissionDialog() {
               <div className="permission-row">
                 <div className="permission-row-main">
                   <div className="permission-row-title">Control Safari</div>
-                  <div className="permission-row-hint">
-                    {control === 'no-js'
-                      ? 'macOS already allows control. Safari blocks scripting: open Safari → Develop → Allow JavaScript from Apple Events, then press Try again.'
-                      : control === 'denied'
-                        ? 'macOS refused. Enable ALLAI-CHAT under Privacy & Security → Automation, then press Try again.'
-                        : 'Lets the app press “Sign in” / “Continue with Google” in the browser. Optional.'}
-                  </div>
+                  <div className="permission-row-hint">{controlHint(control)}</div>
                 </div>
-                <StatusPill state={control === 'ok' ? 'ok' : control === 'unknown' ? 'idle' : 'warn'} />
-                {control === 'no-js' && (
-                  <button className="secondary-button" onClick={() => void window.allai.openSafari()}>
-                    Open Safari
-                  </button>
-                )}
+                <StatusPill state={control === 'ok' ? 'ok' : 'optional'} />
                 {control !== 'ok' && (
                   <button className="secondary-button" onClick={() => void requestControl()}>
-                    {control === 'unknown' ? 'Allow…' : 'Try again'}
+                    {control === 'unknown' ? 'Ask macOS…' : 'Try again'}
                   </button>
                 )}
               </div>
@@ -197,11 +235,9 @@ export function PermissionDialog() {
               <button className="secondary-button" onClick={() => setOpen(false)}>
                 Later
               </button>
-              {fda !== 'ok' && (
-                <button className="primary-button" onClick={() => void window.allai.openFullDiskAccessSettings()}>
-                  Open System Settings
-                </button>
-              )}
+              <button className="primary-button" onClick={() => void window.allai.openFullDiskAccessSettings()}>
+                Open System Settings
+              </button>
             </div>
           </>
         )}

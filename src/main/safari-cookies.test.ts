@@ -5,7 +5,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import type { CookieRecord } from '@shared/cookies';
 
-import { COOKIE_FLAG_HTTP_ONLY, COOKIE_FLAG_SECURE, parseBinaryCookies, readSafariCookies } from './safari-cookies';
+import {
+  COOKIE_FLAG_HTTP_ONLY,
+  COOKIE_FLAG_SECURE,
+  parseBinaryCookies,
+  readSafariCookies,
+  safariCookieFolderReadable
+} from './safari-cookies';
 
 type CookieInput = Pick<CookieRecord, 'domain' | 'name' | 'path' | 'value'> & {
   flags?: number;
@@ -148,5 +154,22 @@ describe('readSafariCookies', () => {
     const corrupt = path.join(dir, 'corrupt');
     fs.writeFileSync(corrupt, 'not a cookie file');
     expect(readSafariCookies([corrupt]).error).toBe('unreadable');
+  });
+});
+
+describe('safariCookieFolderReadable', () => {
+  // Full Disk Access is checked through the folder because Safari may not have
+  // written a cookie file yet; an absent folder means the grant is unknowable.
+  it('leaves the grant unknown when Safari has no cookie folder', () => {
+    expect(safariCookieFolderReadable(tempDir())).toBeUndefined();
+  });
+
+  it('treats a listable cookie folder as granted', () => {
+    const home = tempDir();
+    fs.mkdirSync(
+      path.join(home, 'Library/Containers/com.apple.Safari/Data/Library/Cookies'),
+      { recursive: true }
+    );
+    expect(safariCookieFolderReadable(home)).toBe(true);
   });
 });

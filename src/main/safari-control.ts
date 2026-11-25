@@ -18,7 +18,7 @@ import { execFile } from 'node:child_process';
 export type SafariControlResult = 'ok' | 'denied' | 'no-js' | 'no-page' | 'unsupported';
 
 /** Startup state of the optional Safari control, before any click is tried. */
-export type SafariControlStatus = 'ok' | 'denied' | 'no-js' | 'unsupported';
+export type SafariControlStatus = 'ok' | 'denied' | 'no-js' | 'unknown' | 'unsupported';
 
 function osascript(script: string): Promise<{ ok: boolean; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
@@ -102,19 +102,23 @@ export async function probeSafariControl(): Promise<SafariControlStatus> {
 
   const name = await osascript('tell application "Safari" to get name');
   if (!name.ok) {
+    // -1743 is the explicit "not authorised" answer. Anything else (-600 "not
+    // running", a timeout) says nothing about the grant, so it stays unknown
+    // instead of being reported as a denial.
     if (/-1743|not authori[sz]ed/i.test(name.stderr)) return 'denied';
-    return 'denied';
+    return 'unknown';
   }
 
   // With no window there is nothing to run JavaScript in; automation itself is
   // fine, and the JS setting can only be checked against a real page.
   const documents = await osascript('tell application "Safari" to count documents');
-  if (!documents.ok || documents.stdout === '0') return 'ok';
+  if (!documents.ok) return 'unknown';
+  if (documents.stdout === '0') return 'ok';
 
   const js = await osascript('tell application "Safari" to do JavaScript "1" in front document');
   if (js.ok && js.stdout === '1') return 'ok';
   if (/do JavaScript|JavaScript from Apple Events|not allowed/i.test(`${js.stdout}\n${js.stderr}`)) return 'no-js';
-  return 'denied';
+  return 'unknown';
 }
 
 /** Closes the Safari tab the handoff opened, so the user lands back in the app. */

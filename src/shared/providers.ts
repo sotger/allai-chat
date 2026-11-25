@@ -66,7 +66,10 @@ export const PROVIDER_CONFIGS: Record<ProviderId, ProviderConfig> = {
     url: 'https://grok.com',
     color: '#fbbf24',
     icon: 'Gk',
-    newChatUrl: 'https://grok.com/'
+    newChatUrl: 'https://grok.com/',
+    // Verified on a real login 2026-11-25: grok.com keeps the session in `sso`
+    // (plus its `sso-rw` mirror), not in anything named like "session".
+    sessionCookiePattern: '^sso(-rw)?$'
   },
   huggingchat: {
     id: 'huggingchat',

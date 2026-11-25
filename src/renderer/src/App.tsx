@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MenuAction } from '@shared/ipc';
 import { AddServiceDialog } from './components/AddServiceDialog';
 import { BroadcastDialog } from './components/BroadcastDialog';
@@ -40,28 +40,31 @@ export default function App() {
 
   useEffect(() => window.allai.onStateChanged(applyState), [applyState]);
 
-  // Full Disk Access is what the Safari handoff needs. macOS has no way to ask
-  // for it, so the app explains it once and keeps a strip until it is granted.
-  useEffect(() => {
-    void window.allai.getPermissionStatus().then((status) => {
-      const store = useAppStore.getState();
-      store.setPermissionStatus(status);
-      if (status.safariCookies === 'denied' && !store.preferences.fullDiskAccessNoticeHidden) {
-        store.setPermissionDialogOpen(true);
-      }
-    }).catch(() => undefined);
+  // Full Disk Access is the only permission the Safari handoff needs. macOS has
+  // no way to ask for it, so the dialog explains it once per launch and the strip
+  // stays until the grant appears. Safari control is optional and never prompts
+  // on its own.
+  const permissionPrompted = useRef(false);
+  const explainMissingAccess = useCallback((): void => {
+    const store = useAppStore.getState();
+    if (store.permissionStatus?.safariCookies !== 'denied') return;
+    if (store.preferences.fullDiskAccessNoticeHidden) return;
+    if (permissionPrompted.current) return;
+    permissionPrompted.current = true;
+    store.setPermissionDialogOpen(true);
   }, []);
 
+  useEffect(() => {
+    void window.allai.getPermissionStatus().then((status) => {
+      useAppStore.getState().setPermissionStatus(status);
+      explainMissingAccess();
+    }).catch(() => undefined);
+  }, [explainMissingAccess]);
+
   useEffect(() => window.allai.onPermissionStatus((status) => {
-    const store = useAppStore.getState();
-    store.setPermissionStatus(status);
-    const blocked = status.safariCookies === 'denied'
-      || status.safariControl === 'denied'
-      || status.safariControl === 'no-js';
-    if (blocked && !store.preferences.fullDiskAccessNoticeHidden) {
-      store.setPermissionDialogOpen(true);
-    }
-  }), []);
+    useAppStore.getState().setPermissionStatus(status);
+    explainMissingAccess();
+  }), [explainMissingAccess]);
 
   // Interface text size is a single scale factor applied by CSS to every font
   // size in the app shell. Web pages keep their own zoom setting.
@@ -156,13 +159,15 @@ export default function App() {
     setCookiesTabId(tabId);
   }), []);
 
-  useEffect(() => window.allai.onGoogleSignInDone(({ copied, signedIn }) => {
+  useEffect(() => window.allai.onGoogleSignInDone(({ copied, signedIn, differentAccount }) => {
     useAppStore.getState().setNotice(
       !signedIn
         ? 'Google sign-in window closed.'
-        : copied > 0
-          ? `Google sign-in copied to ${copied} service${copied === 1 ? '' : 's'}.`
-          : 'Google sign-in saved.'
+        : differentAccount
+          ? 'That login used a different Google account — the saved one was kept. Change it in Settings → Google accounts.'
+          : copied > 0
+            ? `Google sign-in copied to ${copied} service${copied === 1 ? '' : 's'}.`
+            : 'Google sign-in saved.'
     );
   }), []);
 

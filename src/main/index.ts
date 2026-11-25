@@ -17,17 +17,17 @@ import fs from 'node:fs';
 import { execFile } from 'node:child_process';
 import { v4 as uuid } from 'uuid';
 
-import { IPC_CHANNELS, type AddTabInput, type BrowserSignInOptions, type CookieFilePick, type DownloadRecord, type MenuAction, type PermissionStatus, type SafariCookieAccess } from '@shared/ipc';
+import { IPC_CHANNELS, type AddTabInput, type BrowserSignInOptions, type CookieFilePick, type DownloadRecord, type GoogleVaultState, type MenuAction, type PermissionStatus, type SafariCookieAccess } from '@shared/ipc';
 import { COOKIE_TEXT_MAX_BYTES } from '@shared/cookies';
 import { getProviderConfig } from '@shared/providers';
 import { createServiceTab } from '@shared/tabs';
 import type { AppState, Preferences, ServiceTab } from '@shared/types';
 import { DownloadManager } from './downloads';
 import { importCookiesIntoTab, tabHost } from './cookie-import';
-import { importSafariSessionNow, watchSafariSession } from './browser-sign-in';
-import { readSafariCookies } from './safari-cookies';
+import { importSafariGoogleSession, importSafariSessionNow, readSafariGoogleSession, watchSafariSession } from './browser-sign-in';
+import { readSafariCookies, safariCookieFolderReadable } from './safari-cookies';
 import { clickSafariSignIn, closeSafariTab, probeSafariControl, type SafariControlStatus } from './safari-control';
-import { GOOGLE_SIGNIN_PARTITION, copyGoogleCookies, hasGoogleSession } from './google-auth';
+import { GOOGLE_SIGNIN_PARTITION, copyGoogleCookies, fingerprintGoogleSession, hasGoogleSession, isSignedInToGoogle, readGoogleCookies } from './google-auth';
 import { getPreferences, isDarkTheme, loadPreferences, savePreferences } from './preferences';
 import { contentsForTab, findInTab, openSearchResult, searchTabs, stopAllFind } from './search';
 import { broadcastPrompt } from './broadcast';
@@ -497,8 +497,37 @@ function reloadTab(tabId: string): void {
   if (tab) contentsForTab(tab)?.reload();
 }
 
-/** Active "sign in in Safari" watcher, if any. */
-let cancelBrowserSignIn: () => void = () => undefined;
+/**
+ * Reloads a tab that just received Google cookies. Only the render matters: a
+ * page that already finished loading keeps showing its signed-out state until it
+ * is reloaded, and a page that is still loading requests the cookies anyway.
+ */
+function reloadAfterGoogleCookies(tabId: string): void {
+  const tab = state.tabs.find(item => item.id === tabId);
+  if (!tab) return;
+  const contents = contentsForTab(tab);
+  if (!contents || contents.isDestroyed() || contents.isLoading()) return;
+  reloadTab(tabId);
+}
+
+/** Active "sign in in Safari" watchers, one per tab. */
+const browserSignInWatchers = new Map<string, () => void>();
+
+/**
+ * Stops the handoff for one tab, or all of them when no tab is named. Watchers
+ * are per tab on purpose: starting a login in another service used to cancel the
+ * one already waiting in the browser, and the finished login was then lost.
+ */
+function cancelBrowserSignIn(tabId?: string): void {
+  if (tabId) {
+    const stop = browserSignInWatchers.get(tabId);
+    browserSignInWatchers.delete(tabId);
+    stop?.();
+    return;
+  }
+  for (const stop of browserSignInWatchers.values()) stop();
+  browserSignInWatchers.clear();
+}
 
 /**
  * Diagnostics for the browser handoff: a small append-only log in userData.
@@ -595,6 +624,8 @@ async function beginBrowserSignIn(
   if (existing.imported > 0 && existing.hasSession) {
     logBrowserSignIn(`reused Safari session tab=${tab.label} host=${target.host} imported=${existing.imported}`);
     navigateTab(tab.id, target.url);
+    // Safari is signed in to Google too: keep that session for the other tabs.
+    void captureGoogleVault();
     sendToRenderer(IPC_CHANNELS.browserSignInResult, {
       tabId: tab.id,
       state: 'imported',
@@ -613,7 +644,7 @@ async function beginBrowserSignIn(
   if (now - startedAt < BROWSER_SIGN_IN_COOLDOWN_MS) return 'opened';
   browserSignInStartedAt.set(tab.id, now);
 
-  cancelBrowserSignIn();
+  cancelBrowserSignIn(tab.id);
   openInSafari(target.openUrl);
 
   logBrowserSignIn(`open tab=${tab.label} host=${target.host} url=${target.openUrl}`);
@@ -625,7 +656,7 @@ async function beginBrowserSignIn(
     deadlineMs: 10 * 60_000,
     onEvent: logBrowserSignIn,
     onDone: (result) => {
-      cancelBrowserSignIn = () => undefined;
+      browserSignInWatchers.delete(tab.id);
       // The tab was left on the auth provider; go to the service itself, now
       // with the imported cookies in place, and pull the app forward so the
       // user does not have to switch back from the browser manually.
@@ -634,14 +665,14 @@ async function beginBrowserSignIn(
         // The browser did its job; put the user back in the app.
         void closeSafariTab(target.host);
         activateApp();
+        // The login that just landed may also be a Google sign-in; store it for
+        // the services that are added next.
+        void captureGoogleVault();
       }
       sendToRenderer(IPC_CHANNELS.browserSignInResult, result);
     }
   });
-  cancelBrowserSignIn = () => {
-    stop();
-    cancelBrowserSignIn = () => undefined;
-  };
+  browserSignInWatchers.set(tab.id, stop);
   return 'opened';
 }
 
@@ -655,8 +686,73 @@ const authHandoffUntil = new Map<string, number>();
 const authHandoffAttempts = new Map<string, { count: number; at: number }>();
 const AUTH_HANDOFF_SUPPRESS_MS = 3 * 60_000;
 
-async function handOffAuthNavigation(tab: ServiceTab): Promise<void> {
+/** Google's own sign-in hosts, as opposed to a service hosted on google.com. */
+function isGoogleAuthHost(host: string | undefined): boolean {
+  if (!host) return false;
+  return host === 'accounts.google.com'
+    || host === 'accounts.youtube.com'
+    || host === 'myaccount.google.com';
+}
+
+/**
+ * Answers a Google sign-in with the session the app already stores, so the round
+ * trip finishes inside the tab. Opening Safari for a login the app could answer
+ * itself is what made every Google handoff take a detour. Returns true when the
+ * provider page was reloaded with those cookies in place.
+ */
+async function completeGoogleSignInInTab(tab: ServiceTab, source?: WebContents): Promise<boolean> {
+  if (!getPreferences().reuseGoogleSignIn || tab.isolatedAuth) return false;
+
+  const vault = session.fromPartition(GOOGLE_SIGNIN_PARTITION);
+  if (!(await hasGoogleSession(vault))) return false;
+
+  const tabSession = session.fromPartition(tab.partition);
+  if (await hasGoogleSession(tabSession)) {
+    // The tab already received the stored session (new tabs get it on creation)
+    // and is walking through Google's own steps. Opening Safari on top of a
+    // working in-app sign-in is exactly the detour to avoid, so this counts as
+    // handled: the page finishes on its own.
+    logBrowserSignIn(`vault-first skip tab=${tab.label} tab already has the Google session`);
+    return true;
+  }
+
+  const copied = await copyGoogleCookies(vault, tabSession);
+  if (copied === 0) return false;
+
+  logBrowserSignIn(`vault-first tab=${tab.label} cookies=${copied}`);
+  // Reload whichever document is on the provider page: a popup carries the OAuth
+  // round trip for services that open one, the tab for the rest.
+  const contents = source && !source.isDestroyed() ? source : contentsForTab(tab);
+  if (!contents || contents.isDestroyed()) return true;
+
+  // Wait for the provider page to commit before reloading: reloading mid-flight
+  // only reloads the previous document. If the page already answered itself and
+  // went back to the service, there is nothing to do.
+  const reloadIfOnProvider = (): void => {
+    if (contents.isDestroyed()) return;
+    if (!isAuthHost(hostOf(contents.getURL()))) return;
+    contents.reload();
+  };
+  if (contents.isLoading()) contents.once('did-stop-loading', reloadIfOnProvider);
+  else reloadIfOnProvider();
+  return true;
+}
+
+async function handOffAuthNavigation(
+  tab: ServiceTab,
+  authHost?: string,
+  source?: WebContents
+): Promise<void> {
   if (process.platform !== 'darwin') return;
+
+  // Use the stored Google session first. Safari is for what the app cannot
+  // answer: an empty vault, another provider, or an explicit account switch.
+  if (isGoogleAuthHost(authHost)) {
+    const handled = await completeGoogleSignInInTab(tab, source);
+    if (handled) return;
+    logBrowserSignIn(`vault-first failed tab=${tab.label} host=${authHost} -> browser`);
+  }
+
   // Take the session Safari already has, if any: this is what makes a Google
   // sign-in instant for services whose Safari cookies are already valid. The
   // bounce loop this used to cause is prevented by the loop guard below.
@@ -669,6 +765,16 @@ async function handOffAuthNavigation(tab: ServiceTab): Promise<void> {
   if (outcome === 'imported') {
     navigateTab(tab.id, root);
     return;
+  }
+  if (outcome === 'opened') {
+    // The tab's own round trip cannot finish without the browser, so do not leave
+    // a dead provider page (or a frozen "Sign in with Apple" screen) behind.
+    setTimeout(() => {
+      const contents = contentsForTab(tab);
+      if (!contents || contents.isDestroyed()) return;
+      if (!isAuthHost(hostOf(contents.getURL()))) return;
+      navigateTab(tab.id, root);
+    }, 1500);
   }
 
   // Optional: press the service's own "Sign in / Continue with Google" button in
@@ -783,6 +889,17 @@ function showTabContextMenu(tabId: string): void {
     {
       label: 'Import cookies…',
       click: () => sendToRenderer(IPC_CHANNELS.cookiesImportRequest, { tabId })
+    },
+    {
+      // The stored Google session answers sign-ins automatically. This is the
+      // deliberate way out: finish this one in the browser, where another
+      // account can be chosen, and take whatever session appears there.
+      label: 'Sign in via Safari (another account)…',
+      enabled: process.platform === 'darwin',
+      click: () => {
+        const tab = state.tabs.find(item => item.id === tabId);
+        if (tab) void beginBrowserSignIn(tab, false, { skipReuse: true });
+      }
     },
     { type: 'separator' },
     {
@@ -1055,7 +1172,10 @@ function syncGoogleFromSession(source: Electron.Session): Promise<number> {
       const target = session.fromPartition(tab.partition);
       if (target === from || target === source) continue;
       if (await hasGoogleSession(target)) continue;
-      if (await copyGoogleCookies(from, target) > 0) copied += 1;
+      if (await copyGoogleCookies(from, target) > 0) {
+        copied += 1;
+        reloadAfterGoogleCookies(tab.id);
+      }
     }
     return copied;
   });
@@ -1073,10 +1193,54 @@ function syncGoogleFromVault(): Promise<number> {
       if (tab.isolatedAuth) continue;
       const target = session.fromPartition(tab.partition);
       if (target === vault || await hasGoogleSession(target)) continue;
-      if (await copyGoogleCookies(vault, target) > 0) copied += 1;
+      if (await copyGoogleCookies(vault, target) > 0) {
+        copied += 1;
+        // A page that was rendered before the copy keeps its signed-out state.
+        reloadAfterGoogleCookies(tab.id);
+      }
     }
     return copied;
   });
+}
+
+/**
+ * Keeps the Google session Safari now holds in the app's own vault. The handoff
+ * imports only the tab's own host, so without this a login that went through
+ * Safari leaves the vault empty and the next service has to go to Safari again.
+ */
+async function captureGoogleVault(): Promise<void> {
+  if (!getPreferences().reuseGoogleSignIn) return;
+
+  const safari = readSafariGoogleSession();
+  if (safari.cookies.length === 0) return;
+
+  const stored = getPreferences().googleVaultSession;
+  // A handoff may have used a different account than the one saved here.
+  // Replacing it would silently change the account every new tab gets, so keep
+  // the saved login and let the user decide in Settings.
+  if (stored && safari.session && safari.session !== stored) {
+    logBrowserSignIn('google vault kept: Safari is signed in as a different account');
+    sendToRenderer(IPC_CHANNELS.googleSignInDone, { copied: 0, signedIn: true, differentAccount: true });
+    return;
+  }
+
+  try {
+    const vault = session.fromPartition(GOOGLE_SIGNIN_PARTITION);
+    const written = await importSafariGoogleSession(vault, safari.cookies);
+    if (written === 0) return;
+    if (safari.session && safari.session !== stored) savePreferences({ googleVaultSession: safari.session });
+    logBrowserSignIn(`google vault updated cookies=${written}`);
+    const copied = await syncGoogleFromVault();
+    sendToRenderer(IPC_CHANNELS.googleSignInDone, { copied, signedIn: true });
+  } catch {
+    /* best effort: the handoff itself already succeeded */
+  }
+}
+
+async function googleVaultState(): Promise<GoogleVaultState> {
+  const vault = session.fromPartition(GOOGLE_SIGNIN_PARTITION);
+  const cookies = await readGoogleCookies(vault);
+  return { saved: isSignedInToGoogle(cookies), cookies: cookies.length };
 }
 
 function openGoogleSignInWindow(): void {
@@ -1110,6 +1274,11 @@ function openGoogleSignInWindow(): void {
     googleSignInWindow = undefined;
     void (async () => {
       const signedIn = await hasGoogleSession(ses);
+      // Closing this window is the explicit "this is my Google account" moment,
+      // so whatever login it left behind becomes the stored one. Accounts can
+      // change here and several can be added, exactly like in a browser.
+      const fingerprint = fingerprintGoogleSession(await readGoogleCookies(ses));
+      savePreferences({ googleVaultSession: fingerprint });
       const copied = await syncGoogleFromVault();
       sendToRenderer(IPC_CHANNELS.googleSignInDone, { copied, signedIn });
     })();
@@ -1206,7 +1375,7 @@ function wireWebContents(contents: Electron.WebContents): void {
       logBrowserSignIn(`auth handoff loop guard tab=${tab.label} attempts=${count}`);
       return;
     }
-    void handOffAuthNavigation(tab);
+    void handOffAuthNavigation(tab, tabHost(event.url), contents);
     // A popup that only hosted the provider's login has nothing left to show.
     if (contentsForTab(tab) !== contents) contents.close();
   });
@@ -1703,6 +1872,7 @@ function wireIpc(): void {
   });
 
   ipcMain.handle(IPC_CHANNELS.syncGoogleSignIn, () => syncGoogleFromVault());
+  ipcMain.handle(IPC_CHANNELS.getGoogleVaultState, () => googleVaultState());
 
   ipcMain.handle(IPC_CHANNELS.searchHistory, async (_event, query: string) => {
     await historyStore.load();
@@ -1872,24 +2042,35 @@ function createMainWindow(): BrowserWindow {
 const FULL_DISK_ACCESS_PANE = 'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles';
 
 /**
- * Whether macOS currently lets the app read Safari's cookie store. macOS has no
- * "request permission" API for Full Disk Access, so the renderer can only tell
- * the user where to flip the switch.
- */
-/**
  * Cached result of the optional Safari control probe. Unknown until the user
  * asks for it, because probing is what makes macOS show its Automation prompt.
  */
 let safariControlCache: SafariControlStatus | undefined;
 
+/**
+ * Full Disk Access is the only permission the browser handoff truly needs, and
+ * macOS has no "request permission" API for it, so the app can only observe it.
+ * An unreadable store is the real signal (EPERM). When Safari has not written a
+ * store yet the file proves nothing either way — listing its folder exercises
+ * the same grant, and only when that folder is absent too is the state unknown.
+ */
+function safariCookieAccess(): SafariCookieAccess {
+  const read = readSafariCookies();
+  if (read.error === 'denied') return 'denied';
+  if (read.error === 'unreadable') return 'unreadable';
+  if (read.error !== 'missing') return 'ok';
+
+  const readable = safariCookieFolderReadable();
+  if (readable === true) return 'ok';
+  if (readable === false) return 'denied';
+  return 'missing';
+}
+
 function permissionStatus(): PermissionStatus {
   if (process.platform !== 'darwin') {
     return { safariCookies: 'unsupported', safariControl: 'unsupported' };
   }
-  const read = readSafariCookies();
-  const safariCookies: SafariCookieAccess =
-    read.error === 'denied' ? 'denied' : read.error === 'missing' ? 'missing' : 'ok';
-  return { safariCookies, safariControl: safariControlCache ?? 'unknown' };
+  return { safariCookies: safariCookieAccess(), safariControl: safariControlCache ?? 'unknown' };
 }
 
 /** Brings the app to the front, also when Safari was full screen on top. */
@@ -1925,15 +2106,10 @@ app.whenReady().then(() => {
   if (permissionStatus().safariCookies === 'denied') {
     console.log('[allai] Full Disk Access missing: browser sign-in cannot read Safari cookies');
   }
-  // Check every permission the browser handoff uses, right at startup: the
-  // Automation probe is what makes macOS show its prompt. Running it here means
-  // the user is asked once, before the first login, not in the middle of one.
-  setTimeout(() => {
-    void (async () => {
-      safariControlCache = await probeSafariControl();
-      sendToRenderer(IPC_CHANNELS.permissionStatus, permissionStatus());
-    })();
-  }, 1500);
+  // The optional Safari control is deliberately not probed here: the Apple Event
+  // is what makes macOS show its Automation prompt, and that permission only
+  // closes the Safari tab afterwards. It is checked from the permission dialog on
+  // an explicit click, or learned from a real handoff.
   // The user may fix a grant in System Settings while the app is open.
   mainWindow.on('focus', () => {
     sendToRenderer(IPC_CHANNELS.permissionStatus, permissionStatus());

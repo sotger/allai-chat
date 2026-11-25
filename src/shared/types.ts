@@ -83,6 +83,13 @@ export interface Preferences {
    * tab. Disabled means every tab signs in independently.
    */
   reuseGoogleSignIn: boolean;
+  /**
+   * Short, non-reversible fingerprint of the Google login stored in the app's
+   * own profile. Used only to notice that a login elsewhere used a different
+   * account, so the saved one is not replaced without the user asking. Never
+   * the cookie itself.
+   */
+  googleVaultSession?: string;
   /** Base interface font size in px: 13 (default), 14, 15 or 16. */
   uiFontSize: number;
   /**

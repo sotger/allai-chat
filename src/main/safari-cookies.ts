@@ -97,6 +97,34 @@ export function safariCookiePaths(home = os.homedir()): string[] {
   ];
 }
 
+/** Folders that hold the cookie stores above, in the same order. */
+export function safariCookieFolders(home = os.homedir()): string[] {
+  return [
+    path.join(home, 'Library/Containers/com.apple.Safari/Data/Library/Cookies'),
+    path.join(home, 'Library/Cookies')
+  ];
+}
+
+/**
+ * Whether macOS lets the app look inside Safari's cookie folder. Listing the
+ * folder exercises the same Full Disk Access grant as reading the store, so it
+ * answers the question even when Safari has not written a cookie file yet.
+ * `undefined` means no such folder exists: Safari has never run here and the
+ * grant cannot be checked from the file system at all.
+ */
+export function safariCookieFolderReadable(home = os.homedir()): boolean | undefined {
+  for (const folder of safariCookieFolders(home)) {
+    try {
+      fs.readdirSync(folder);
+      return true;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'EACCES' || code === 'EPERM') return false;
+    }
+  }
+  return undefined;
+}
+
 export interface SafariCookieRead {
   cookies: CookieRecord[];
   path?: string;

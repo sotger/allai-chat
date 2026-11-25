@@ -51,11 +51,12 @@
   family for Gemini, `sessionKey` for Claude — instead of assuming ChatGPT's
   `*session-token`. Without it the watch kept waiting until its 10-minute deadline.
 - **Permissions are checked at startup**, not the first time a service needs
-  them. Full Disk Access and the optional Safari control are probed when the app
-  opens; a dialog lists every check with `Allowed` / `Missing` / `Not checked`, an
+  them. A dialog lists every check with `Allowed` / `Missing` / `Not checked`, an
   alarm strip stays on screen while something is missing, and the dialog closes
-  itself as soon as the grants land. `Full Disk Access` is required for the
-  handoff; `Control Safari` only makes it hands-free.
+  itself as soon as the grants land. `Full Disk Access` is the only required one;
+  `Control Safari` is optional and is not requested at startup anymore (the Apple
+  Event itself is what makes macOS show its Automation prompt, and the permission
+  only closes the Safari tab afterwards).
 - **The browser gives focus back.** After a successful import the app closes the
   Safari tab it opened and activates itself, so the user does not have to switch
   back by hand.
@@ -77,6 +78,48 @@
   `src/preload/webview.ts` made Rollup split a `chunks/ipc-*.cjs` file that a
   sandboxed preload cannot require from inside the asar — the preload failed to
   load and `window.allai` disappeared. The channel name is a literal again.
+
+### Added — 2026-11-25 (shared Google session, per-tab handoff)
+
+- **The shared Google session is filled by the browser handoff.** The vault was
+  written only by the OAuth-popup paths, which the handoff replaced, so a login
+  that finished in Safari left it empty and every next service had to go back to
+  the browser. A successful import now stores Safari's whole Google cookie set
+  (every `*.google.com` host, not three addresses) — a partial copy loses the
+  account chooser.
+- **Settings shows what is stored.** **Settings → Google sign-in** reports
+  “Saved on this Mac — N Google cookies” or “No Google session saved yet”,
+  **Apply to services** enables only when there is something to apply, and
+  **Google accounts…** opens Google's own account chooser inside the app's
+  profile, where further accounts can be added or switched.
+- **A different account no longer replaces the stored one.** The vault keeps a
+  short, non-reversible hash of the session cookie. When a handoff used another
+  account, the stored login is kept and the app says so instead of silently
+  changing which account every new tab receives.
+- **Right-click a tab → Sign in via Safari (another account)…** finishes a single
+  login in the browser, where another account can be chosen, skipping both the
+  stored session and the session Safari already holds.
+
+### Fixed — 2026-11-25 (later)
+
+- **Grok was never recognised as signed in.** Its session lives in `sso` /
+  `sso-rw`, not in anything named `session`, so the import wrote the cookies and
+  then kept waiting until the deadline. `grok.com` now declares
+  `sessionCookiePattern: '^sso(-rw)?$'` (verified on a real login).
+- **One handoff no longer cancels another.** The watcher was a single global, so
+  starting a login in another service silently stopped the one already waiting in
+  the browser; that login then finished with nobody watching. Watchers are per
+  tab now.
+- **A tab that receives the shared session is reloaded.** Copying cookies into a
+  page that had already rendered left it sitting on its signed-out state.
+- **The handoff log names the cookies it sees** — `waiting: 4 new cookie(s), no
+  session yet (sso, sso-rw)` — names only, never values. That is what made the
+  Grok rule visible instead of guessed.
+- **Full Disk Access is reported honestly.** A Safari that has not written a
+  cookie store yet used to show `Missing` even with the grant in place; the app
+  now checks the cookie *folder* (the same TCC access) and reports
+  `Not checked` only when there is genuinely nothing to read.
+
 
 ## 1.8.1 — 2026-11-23
 

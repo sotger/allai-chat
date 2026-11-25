@@ -86,8 +86,13 @@ export interface BrowserSignInStart {
   reason?: 'no-tab' | 'unsupported' | 'no-host';
 }
 
-/** What macOS currently allows: reading Safari's cookies needs Full Disk Access. */
-export type SafariCookieAccess = 'ok' | 'denied' | 'missing' | 'unsupported';
+/**
+ * What macOS currently allows: reading Safari's cookies needs Full Disk Access.
+ * `missing` means Safari has no cookie store here, so the grant cannot be
+ * checked at all — it is not a failure. `unreadable` means the store exists but
+ * could not be parsed, which is a Safari problem, not a permission one.
+ */
+export type SafariCookieAccess = 'ok' | 'denied' | 'missing' | 'unreadable' | 'unsupported';
 
 /** Optional Safari automation: Apple Events plus Safari's JS-from-events setting. */
 export type SafariControlAccess = 'unknown' | 'ok' | 'denied' | 'no-js' | 'unsupported';
@@ -175,6 +180,19 @@ export interface GoogleSignInResult {
   copied: number;
   /** Whether the app-owned Google profile now has a session. */
   signedIn: boolean;
+  /**
+   * A login used a different Google account than the one the app has stored, so
+   * the stored one was kept. Google itself allows several accounts in one
+   * profile; this flag is about the profile's identity changing.
+   */
+  differentAccount?: boolean;
+}
+
+/** What the app's own Google vault currently holds. Never contains cookie values. */
+export interface GoogleVaultState {
+  saved: boolean;
+  /** How many Google cookies are stored (0 when nothing is saved). */
+  cookies: number;
 }
 
 export interface AllaiApi {
@@ -221,6 +239,7 @@ export interface AllaiApi {
   importHistory: () => Promise<HistoryImportResult>;
   openGoogleSignIn: () => Promise<void>;
   syncGoogleSignIn: () => Promise<number>;
+  getGoogleVaultState: () => Promise<GoogleVaultState>;
   getDownloads: () => Promise<DownloadRecord[]>;
   cancelDownload: (id: string) => Promise<void>;
   showDownload: (id: string) => Promise<void>;
@@ -292,6 +311,7 @@ export const IPC_CHANNELS = {
   importHistory: 'allai:import-history',
   openGoogleSignIn: 'allai:open-google-sign-in',
   syncGoogleSignIn: 'allai:sync-google-sign-in',
+  getGoogleVaultState: 'allai:get-google-vault-state',
   getDownloads: 'allai:get-downloads',
   cancelDownload: 'allai:cancel-download',
   showDownload: 'allai:show-download',
