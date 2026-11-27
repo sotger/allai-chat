@@ -19,6 +19,7 @@ import { v4 as uuid } from 'uuid';
 
 import { IPC_CHANNELS, type AddTabInput, type BrowserSignInOptions, type CookieFilePick, type DownloadRecord, type GoogleVaultState, type MenuAction, type PermissionStatus, type SafariCookieAccess } from '@shared/ipc';
 import { COOKIE_TEXT_MAX_BYTES } from '@shared/cookies';
+import { isDownloadableMediaUrl } from '@shared/media';
 import { getProviderConfig } from '@shared/providers';
 import { createServiceTab } from '@shared/tabs';
 import type { AppState, Preferences, ServiceTab } from '@shared/types';
@@ -921,6 +922,12 @@ function showTabContextMenu(tabId: string): void {
         sendMenuAction('find-all');
       }
     },
+    {
+      // The inline editor lives in the sidebar; the menu only asks for it, so
+      // renaming behaves exactly like double-clicking the label.
+      label: 'Rename…',
+      click: () => sendToRenderer(IPC_CHANNELS.tabRenameRequest, { tabId })
+    },
     { type: 'separator' },
     {
       label: 'Allow shared Google sign-in',
@@ -972,6 +979,24 @@ function openExternalSafe(url: string): void {
       void shell.openExternal(url);
     }
   } catch { /* ignore invalid URLs */ }
+}
+
+/**
+ * A click on a media file has to save the file, not replace the page with a
+ * player. Chromium ignores the HTML `download` attribute for cross-origin URLs
+ * (the click becomes a navigation), and `window.open` of a CDN video fails the
+ * "service's own host" check, so the download used to end up either as a player
+ * in the tab or in the system browser. Both look like "the app will not let me
+ * download this video".
+ */
+function startMediaDownload(contents: WebContents, url: string): void {
+  if (contents.isDestroyed()) return;
+  try {
+    // Downloads in this page's session, so cookies and the referrer are sent.
+    contents.downloadURL(url);
+  } catch {
+    openExternalSafe(url);
+  }
 }
 
 const AUTH_HOSTS = [
@@ -1364,6 +1389,13 @@ function wireWebContents(contents: Electron.WebContents): void {
   // The old "open another BrowserWindow and deny window.open" approach broke
   // Claude's Google callback and left Grok on a blank page.
   contents.setWindowOpenHandler(({ url }) => {
+    // `window.open` on a CDN media URL is a download, not a sign-in popup. The
+    // host is the CDN, so it would otherwise be handed to the system browser.
+    if (isDownloadableMediaUrl(url)) {
+      startMediaDownload(contents, url);
+      return { action: 'deny' };
+    }
+
     if (isTrustedPopup(url, contents.getURL())) {
       return {
         action: 'allow',
@@ -1396,7 +1428,23 @@ function wireWebContents(contents: Electron.WebContents): void {
   // denied. This keeps a compromised page from loading local files or custom
   // protocol handlers.
   contents.on('will-navigate', (event, url) => {
-    if (!isHttpUrl(url) && url !== 'about:blank') event.preventDefault();
+    if (!isHttpUrl(url) && url !== 'about:blank') {
+      event.preventDefault();
+      return;
+    }
+    // "Download" links point at a CDN file; in Chromium that is a navigation,
+    // which would replace the service with a bare video player. A download
+    // endpoint that redirects to the file is caught on the redirect.
+    if (isDownloadableMediaUrl(url)) {
+      event.preventDefault();
+      startMediaDownload(contents, url);
+    }
+  });
+
+  contents.on('will-redirect', (event) => {
+    if (!event.isMainFrame || !isDownloadableMediaUrl(event.url)) return;
+    event.preventDefault();
+    startMediaDownload(contents, event.url);
   });
 
   // The service handed the tab (or its popup) over to a sign-in provider. One

@@ -1,7 +1,7 @@
 import type { IpcRendererEvent } from 'electron';
 import { contextBridge, ipcRenderer } from 'electron';
 
-import { IPC_CHANNELS, type AllaiApi, type BrowserSignInResult, type CookiesImportRequest, type DownloadRecord, type GoogleSignInResult, type MenuAction, type PermissionStatus, type UpdateStatus } from '@shared/ipc';
+import { IPC_CHANNELS, type AllaiApi, type BrowserSignInResult, type CookiesImportRequest, type DownloadRecord, type GoogleSignInResult, type MenuAction, type PermissionStatus, type TabRenameRequest, type UpdateStatus } from '@shared/ipc';
 import type { HistoryProgress, HistoryReport } from '@shared/history';
 import type { SyncStatus } from '@shared/sync';
 import type { AppState, Preferences } from '@shared/types';
@@ -73,6 +73,7 @@ const api: AllaiApi = {
   onDownloadsChanged: (listener) => subscribe<DownloadRecord[]>(IPC_CHANNELS.downloadsChanged, listener),
   onGoogleSignInDone: (listener) => subscribe<GoogleSignInResult>(IPC_CHANNELS.googleSignInDone, listener),
   onCookiesImportRequest: (listener) => subscribe<CookiesImportRequest>(IPC_CHANNELS.cookiesImportRequest, listener),
+  onTabRenameRequest: (listener) => subscribe<TabRenameRequest>(IPC_CHANNELS.tabRenameRequest, listener),
   onBrowserSignInResult: (listener) => subscribe<BrowserSignInResult>(IPC_CHANNELS.browserSignInResult, listener),
   onPermissionStatus: (listener) => subscribe<PermissionStatus>(IPC_CHANNELS.permissionStatus, listener),
   onHistoryProgress: (listener) => subscribe<HistoryProgress>(IPC_CHANNELS.historyProgress, listener),

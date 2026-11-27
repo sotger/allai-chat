@@ -70,6 +70,11 @@ export interface CookiesImportRequest {
   tabId: string;
 }
 
+/** Sent when the tab context menu asks the sidebar to rename that tab. */
+export interface TabRenameRequest {
+  tabId: string;
+}
+
 /** A cookie file chosen by the user; the main process reads it, not the UI. */
 export interface CookieFilePick {
   canceled: boolean;
@@ -268,6 +273,7 @@ export interface AllaiApi {
   onDownloadsChanged: (listener: (downloads: DownloadRecord[]) => void) => () => void;
   onGoogleSignInDone: (listener: (result: GoogleSignInResult) => void) => () => void;
   onCookiesImportRequest: (listener: (request: CookiesImportRequest) => void) => () => void;
+  onTabRenameRequest: (listener: (request: TabRenameRequest) => void) => () => void;
   onBrowserSignInResult: (listener: (result: BrowserSignInResult) => void) => () => void;
   onPermissionStatus: (listener: (status: PermissionStatus) => void) => () => void;
   onHistoryProgress: (listener: (progress: HistoryProgress) => void) => () => void;
@@ -340,6 +346,7 @@ export const IPC_CHANNELS = {
   downloadsChanged: 'allai:event:downloads-changed',
   googleSignInDone: 'allai:event:google-sign-in-done',
   cookiesImportRequest: 'allai:event:cookies-import-request',
+  tabRenameRequest: 'allai:event:tab-rename-request',
   browserSignInResult: 'allai:event:browser-sign-in-result',
   permissionStatus: 'allai:event:permission-status',
   historyProgress: 'allai:event:history-progress',

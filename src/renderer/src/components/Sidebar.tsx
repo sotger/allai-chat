@@ -118,10 +118,41 @@ export function Sidebar({ version, onAdd }: Props) {
     setDraft(tab.label);
   };
 
+  // "Rename…" in the native tab context menu opens the same inline editor as a
+  // double-click. The rail hides labels, so expand the sidebar first.
+  const focusRenameRef = useRef<string | null>(null);
+  const editingRef = useRef<{ id: string; draft: string } | null>(null);
+  useEffect(() => {
+    editingRef.current = editingId ? { id: editingId, draft } : null;
+  }, [editingId, draft]);
+  useEffect(() => window.allai.onTabRenameRequest(({ tabId }) => {
+    const target = useAppStore.getState().tabs.find((tab) => tab.id === tabId);
+    if (!target) return;
+    // Right-clicking a second tab while one is being edited must not silently
+    // drop the first draft, which a blur would have committed.
+    const previous = editingRef.current;
+    if (previous && previous.id !== tabId) void renameTab(previous.id, previous.draft);
+    setMode((previousMode) => {
+      if (previousMode === 'compact') return previousMode;
+      localStorage.setItem(SIDEBAR_MODE_KEY, 'compact');
+      return 'compact';
+    });
+    focusRenameRef.current = tabId;
+    setEditingId(tabId);
+    setDraft(target.label);
+  }), [renameTab]);
+
   const commitRename = (): void => {
     if (editingId) void renameTab(editingId, draft);
     setEditingId(null);
   };
+
+  // A context-menu rename can target a tab that is scrolled out of the list.
+  useEffect(() => {
+    if (!editingId || focusRenameRef.current !== editingId) return;
+    focusRenameRef.current = null;
+    document.querySelector('.service-tab .tab-rename')?.scrollIntoView({ block: 'nearest' });
+  }, [editingId]);
 
   const handleDrop = (targetId: string): void => {
     if (!draggingId || draggingId === targetId) {

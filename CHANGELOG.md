@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.9.2 — 2026-11-27
+
+### Added
+
+- **Rename a service from the tab context menu.** Right-click a tab →
+  **Rename…** opens the same inline editor as a double-click, so a label can be
+  changed without remembering the shortcut. In the icon-only rail the sidebar
+  expands first, and right-clicking another tab while one is being renamed keeps
+  the unfinished label instead of dropping it.
+
+### Fixed
+
+- **Download links on AI services actually download.** Chromium ignores the
+  HTML `download` attribute on cross-origin URLs, so clicking a “Download”
+  button for a file on a CDN host turned the tab into a bare video player
+  instead of saving anything (seen on seedance.ai: the tab navigated to
+  `cdn.seedance.ai/…mp4`). `window.open` of the same CDN URL was not the
+  service's own host either, so it was handed to the system browser — which is
+  why the file only downloaded in Safari. Media-file navigations, redirects and
+  popups are now turned into a real download in the tab's own session (cookies
+  and referrer included), and the file appears in the downloads panel. Ordinary
+  page navigations are untouched.
+
 ## 1.9.1 — 2026-11-27
 
 ### Fixed

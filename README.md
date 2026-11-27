@@ -37,8 +37,9 @@ is still waiting to be read.
 
 ## Features
 
-- **Vertical tabs** — one tab per AI service, drag to reorder, double-click to
-  rename, switch instantly with the sidebar or `Cmd/Ctrl+1…9`. The sidebar is
+- **Vertical tabs** — one tab per AI service, drag to reorder, double-click (or
+  right-click → **Rename…**) to rename, switch instantly with the sidebar or
+  `Cmd/Ctrl+1…9`. The sidebar is
   compact by default, can be dragged wider with the mouse (140–420 px,
   double-click the edge to reset) and collapses to a 64 px icon rail with one
   click.
@@ -234,10 +235,10 @@ x64), Windows (x64) and Linux (x64).
 3. Click another tab to switch services. Each tab keeps its own login.
 4. To use a second account, add the same provider again; it gets its own session
    and is labelled `ChatGPT 2`, `Gemini 2`, etc.
-5. Right-click a service in the sidebar to **reload**, **find**, **find across
-   all services**, open **Settings**, **reset login info** for that tab only,
-   **import cookies** from a browser, or toggle **Allow shared Google sign-in**
-   for that tab.
+5. Right-click a service in the sidebar to **rename** it, **reload**, **find**,
+   **find across all services**, open **Settings**, **reset login info** for that
+   tab only, **import cookies** from a browser, or toggle **Allow shared Google
+   sign-in** for that tab.
 
 Each tab has a separate cookie jar, so two tabs of the same service can stay
 signed in to two different Google accounts. If shared Google sign-in is enabled,
