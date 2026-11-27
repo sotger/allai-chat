@@ -78,8 +78,12 @@ export interface CookieFilePick {
   error?: 'too-large' | 'read-failed';
 }
 
-/** "Sign in in Safari, then hand the session to the app" — macOS only. */
-export type BrowserSignInState = 'imported' | 'timeout' | 'denied';
+/**
+ * "Sign in in Safari, then hand the session to the app" — macOS only.
+ * `blocked` means the handoff was deliberately not started (the app answered the
+ * passkey prompt itself, or a bounce loop was stopped); `message` explains why.
+ */
+export type BrowserSignInState = 'imported' | 'timeout' | 'denied' | 'blocked';
 
 export interface BrowserSignInStart {
   ok: boolean;
@@ -112,6 +116,8 @@ export interface BrowserSignInResult {
   state: BrowserSignInState;
   host?: string;
   imported?: number;
+  /** User-facing explanation for `blocked`; the renderer has a default too. */
+  message?: string;
 }
 
 /** Result of taking the current Safari session for a tab, on demand. */

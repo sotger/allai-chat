@@ -24,10 +24,13 @@ import { createServiceTab } from '@shared/tabs';
 import type { AppState, Preferences, ServiceTab } from '@shared/types';
 import { DownloadManager } from './downloads';
 import { importCookiesIntoTab, tabHost } from './cookie-import';
-import { importSafariGoogleSession, importSafariSessionNow, readSafariGoogleSession, watchSafariSession } from './browser-sign-in';
+import { importSafariCookies, importSafariGoogleSession, importSafariSessionNow, readSafariGoogleSession, readSafariGoogleState, watchSafariSession } from './browser-sign-in';
+import { LoginFlowController } from './login-flow';
+import { cookiesSatisfiedBy, serviceEntryUrl } from '@shared/login-policy';
 import { readSafariCookies, safariCookieFolderReadable } from './safari-cookies';
 import { clickSafariSignIn, closeSafariTab, probeSafariControl, type SafariControlStatus } from './safari-control';
 import { GOOGLE_SIGNIN_PARTITION, copyGoogleCookies, fingerprintGoogleSession, hasGoogleSession, isSignedInToGoogle, readGoogleCookies } from './google-auth';
+import { isGoogleAuthCookieName } from '@shared/google-auth';
 import { getPreferences, isDarkTheme, loadPreferences, savePreferences } from './preferences';
 import { contentsForTab, findInTab, openSearchResult, searchTabs, stopAllFind } from './search';
 import { broadcastPrompt } from './broadcast';
@@ -623,7 +626,8 @@ async function beginBrowserSignIn(
   // means Safari can answer instead of the user.
   if (existing.imported > 0 && existing.hasSession) {
     logBrowserSignIn(`reused Safari session tab=${tab.label} host=${target.host} imported=${existing.imported}`);
-    navigateTab(tab.id, target.url);
+    loginFlow.onImported(tab.id, existing.imported);
+    navigateTab(tab.id, serviceEntryUrl(target.url));
     // Safari is signed in to Google too: keep that session for the other tabs.
     void captureGoogleVault();
     sendToRenderer(IPC_CHANNELS.browserSignInResult, {
@@ -641,7 +645,12 @@ async function beginBrowserSignIn(
 
   const now = Date.now();
   const startedAt = browserSignInStartedAt.get(tab.id) ?? 0;
-  if (now - startedAt < BROWSER_SIGN_IN_COOLDOWN_MS) return 'opened';
+  if (now - startedAt < BROWSER_SIGN_IN_COOLDOWN_MS) {
+    // Still counts as "opened" for the caller, but say so: a silent no-op here
+    // used to look like the app had ignored the click.
+    logBrowserSignIn(`browser cooldown tab=${tab.label} waited=${Math.round((now - startedAt) / 1000)}s`);
+    return 'opened';
+  }
   browserSignInStartedAt.set(tab.id, now);
 
   cancelBrowserSignIn(tab.id);
@@ -661,13 +670,22 @@ async function beginBrowserSignIn(
       // with the imported cookies in place, and pull the app forward so the
       // user does not have to switch back from the browser manually.
       if (result.state === 'imported') {
-        navigateTab(tab.id, target.url);
+        loginFlow.onImported(tab.id, result.imported ?? 0);
+        navigateTab(tab.id, serviceEntryUrl(target.url));
         // The browser did its job; put the user back in the app.
         void closeSafariTab(target.host);
         activateApp();
         // The login that just landed may also be a Google sign-in; store it for
         // the services that are added next.
         void captureGoogleVault();
+      } else if (result.state === 'timeout' || result.state === 'denied') {
+        // The session is not coming (no grant, or Safari never wrote it): do not
+        // leave a dead provider page behind — give the service back.
+        loginFlow.onWatchEnd(tab.id, result.state);
+        const contents = contentsForTab(tab);
+        if (contents && !contents.isDestroyed() && isAuthHost(hostOf(contents.getURL()))) {
+          navigateTab(tab.id, serviceEntryUrl(target.url));
+        }
       }
       sendToRenderer(IPC_CHANNELS.browserSignInResult, result);
     }
@@ -677,110 +695,139 @@ async function beginBrowserSignIn(
 }
 
 /**
- * Google/Microsoft/Apple sign-in started from the service page navigates the tab
- * itself to the provider, where the embedded browser gets a degraded form (or a
- * "browser not secure" wall). Treat it like a blocked passkey: finish the login
- * in Safari and import the session afterwards.
+ * Copies the live Safari Google session into a tab, but only when the tab does
+ * not already hold it. Reloading an OAuth page for nothing is what produced a
+ * 400 on the second sign-in attempt.
  */
-const authHandoffUntil = new Map<string, number>();
-const authHandoffAttempts = new Map<string, { count: number; at: number }>();
-const AUTH_HANDOFF_SUPPRESS_MS = 3 * 60_000;
+async function copyLiveGoogleInto(tab: ServiceTab): Promise<number> {
+  const browser = readSafariGoogleState();
+  if (browser.state !== 'signed-in' || browser.cookies.length === 0) return 0;
 
-/** Google's own sign-in hosts, as opposed to a service hosted on google.com. */
-function isGoogleAuthHost(host: string | undefined): boolean {
-  if (!host) return false;
-  return host === 'accounts.google.com'
-    || host === 'accounts.youtube.com'
-    || host === 'myaccount.google.com';
+  const tabSession = session.fromPartition(tab.partition);
+  const existing = await readGoogleCookies(tabSession);
+  // Compare only the login cookies: preference/analytics cookies change all the
+  // time and must not force a reload of the OAuth page.
+  const liveAuth = browser.cookies.filter((cookie) => isGoogleAuthCookieName(cookie.name));
+  const tabAuth = existing.filter((cookie) => isGoogleAuthCookieName(cookie.name)).map((cookie) => ({
+    domain: cookie.domain ?? '', path: cookie.path ?? '/', name: cookie.name,
+    value: cookie.value, expirationDate: cookie.expirationDate
+  }));
+  if (liveAuth.length > 0 && cookiesSatisfiedBy(liveAuth, tabAuth)) return 0;
+
+  const copied = await importSafariCookies(tabSession, browser.cookies);
+  if (copied > 0) logBrowserSignIn(`google live copy tab=${tab.label} cookies=${copied}`);
+  return copied;
+}
+
+/** Same for the stored snapshot, used when Safari's store is not readable. */
+async function copyVaultGoogleInto(tab: ServiceTab): Promise<number> {
+  const vault = session.fromPartition(GOOGLE_SIGNIN_PARTITION);
+  const cookies = await readGoogleCookies(vault);
+  if (cookies.length === 0) return 0;
+
+  const tabSession = session.fromPartition(tab.partition);
+  const existing = await readGoogleCookies(tabSession);
+  const vaultAuth = cookies.filter((cookie) => isGoogleAuthCookieName(cookie.name));
+  const tabAuth = existing.filter((cookie) => isGoogleAuthCookieName(cookie.name)).map((cookie) => ({
+    domain: cookie.domain ?? '', path: cookie.path ?? '/', name: cookie.name,
+    value: cookie.value, expirationDate: cookie.expirationDate
+  }));
+  if (vaultAuth.length > 0 && cookiesSatisfiedBy(vaultAuth, tabAuth)) return 0;
+
+  const copied = await copyGoogleCookies(vault, tabSession);
+  if (copied > 0) logBrowserSignIn(`google vault copy tab=${tab.label} cookies=${copied}`);
+  return copied;
 }
 
 /**
- * Answers a Google sign-in with the session the app already stores, so the round
- * trip finishes inside the tab. Opening Safari for a login the app could answer
- * itself is what made every Google handoff take a detour. Returns true when the
- * provider page was reloaded with those cookies in place.
+ * One state machine for every sign-in, whichever provider and whichever way it
+ * started. The hooks are the only place that touches sessions, windows and
+ * Safari; the transitions themselves live in `src/main/login-flow.ts`.
  */
-async function completeGoogleSignInInTab(tab: ServiceTab, source?: WebContents): Promise<boolean> {
-  if (!getPreferences().reuseGoogleSignIn || tab.isolatedAuth) return false;
+const loginFlow = new LoginFlowController({
+  now: () => Date.now(),
+  newId: () => uuid().slice(0, 8),
+  log: logBrowserSignIn,
+  sharingEnabled: (tabId) => {
+    const tab = state.tabs.find((item) => item.id === tabId);
+    return Boolean(tab) && getPreferences().reuseGoogleSignIn && tab?.isolatedAuth !== true;
+  },
+  // No Safari off macOS: the vault fallback is the only shared session there.
+  browserGoogle: () => (process.platform === 'darwin' ? readSafariGoogleState().state : 'unknown'),
+  vaultHasGoogle: () => hasGoogleSession(session.fromPartition(GOOGLE_SIGNIN_PARTITION)),
+  tabHasGoogle: async (tabId) => {
+    const tab = state.tabs.find((item) => item.id === tabId);
+    return tab ? hasGoogleSession(session.fromPartition(tab.partition)) : false;
+  },
+  copyBrowserGoogle: (tabId) => {
+    const tab = state.tabs.find((item) => item.id === tabId);
+    return tab ? copyLiveGoogleInto(tab) : Promise.resolve(0);
+  },
+  copyVaultGoogle: (tabId) => {
+    const tab = state.tabs.find((item) => item.id === tabId);
+    return tab ? copyVaultGoogleInto(tab) : Promise.resolve(0);
+  },
+  // The provider page has not committed yet when the auth navigation fires:
+  // reloading now would reload the service page and cancel the sign-in.
+  reloadProvider: (tabId) => {
+    const tab = state.tabs.find((item) => item.id === tabId);
+    const contents = tab ? contentsForTab(tab) : undefined;
+    if (!contents || contents.isDestroyed()) return;
+    const reloadIfOnProvider = (): void => {
+      if (contents.isDestroyed()) return;
+      if (!isAuthHost(hostOf(contents.getURL()))) return;
+      contents.reload();
+    };
+    if (contents.isLoading()) contents.once('did-stop-loading', reloadIfOnProvider);
+    else reloadIfOnProvider();
+  },
+  reloadTab: (tabId) => reloadTab(tabId),
+  navigateTab: (tabId, url) => navigateTab(tabId, url),
+  openBrowser: (tabId, trigger) => {
+    const tab = state.tabs.find((item) => item.id === tabId);
+    if (!tab) return;
+    void beginBrowserSignIn(tab, trigger === 'passkey', { fromAuth: trigger === 'navigation' })
+      .then((outcome) => {
+        if (outcome === 'opened') scheduleAuthReturn(tab);
+        // No Safari on this platform (or no host): let the next attempt decide anew.
+        if (outcome === 'none') loginFlow.cancel(tabId);
+      });
+  },
+  notify: (tabId, message) => notifySignInBlocked(tabId, undefined, message),
+  entryUrl: (tabId) => {
+    const tab = state.tabs.find((item) => item.id === tabId);
+    return tab ? serviceEntryUrl(tab.url) : '';
+  },
+  isAuthUrl: (url) => isAuthHost(hostOf(url))
+});
 
-  const vault = session.fromPartition(GOOGLE_SIGNIN_PARTITION);
-  if (!(await hasGoogleSession(vault))) return false;
-
-  const tabSession = session.fromPartition(tab.partition);
-  if (await hasGoogleSession(tabSession)) {
-    // The tab already received the stored session (new tabs get it on creation)
-    // and is walking through Google's own steps. Opening Safari on top of a
-    // working in-app sign-in is exactly the detour to avoid, so this counts as
-    // handled: the page finishes on its own.
-    logBrowserSignIn(`vault-first skip tab=${tab.label} tab already has the Google session`);
-    return true;
-  }
-
-  const copied = await copyGoogleCookies(vault, tabSession);
-  if (copied === 0) return false;
-
-  logBrowserSignIn(`vault-first tab=${tab.label} cookies=${copied}`);
-  // Reload whichever document is on the provider page: a popup carries the OAuth
-  // round trip for services that open one, the tab for the rest.
-  const contents = source && !source.isDestroyed() ? source : contentsForTab(tab);
-  if (!contents || contents.isDestroyed()) return true;
-
-  // Wait for the provider page to commit before reloading: reloading mid-flight
-  // only reloads the previous document. If the page already answered itself and
-  // went back to the service, there is nothing to do.
-  const reloadIfOnProvider = (): void => {
-    if (contents.isDestroyed()) return;
-    if (!isAuthHost(hostOf(contents.getURL()))) return;
-    contents.reload();
-  };
-  if (contents.isLoading()) contents.once('did-stop-loading', reloadIfOnProvider);
-  else reloadIfOnProvider();
-  return true;
+/** Tells the renderer that a handoff was deliberately not started, and why. */
+function notifySignInBlocked(tabId: string, host: string | undefined, message: string): void {
+  sendToRenderer(IPC_CHANNELS.browserSignInResult, {
+    tabId,
+    state: 'blocked',
+    host,
+    message
+  });
 }
 
-async function handOffAuthNavigation(
-  tab: ServiceTab,
-  authHost?: string,
-  source?: WebContents
-): Promise<void> {
-  if (process.platform !== 'darwin') return;
-
-  // Use the stored Google session first. Safari is for what the app cannot
-  // answer: an empty vault, another provider, or an explicit account switch.
-  if (isGoogleAuthHost(authHost)) {
-    const handled = await completeGoogleSignInInTab(tab, source);
-    if (handled) return;
-    logBrowserSignIn(`vault-first failed tab=${tab.label} host=${authHost} -> browser`);
-  }
-
-  // Take the session Safari already has, if any: this is what makes a Google
-  // sign-in instant for services whose Safari cookies are already valid. The
-  // bounce loop this used to cause is prevented by the loop guard below.
-  const outcome = await beginBrowserSignIn(tab, false, { fromAuth: true });
-  if (outcome === 'none') return;
+/**
+ * After Safari was opened for a sign-in, bring the tab back to the service
+ * instead of leaving it on a dead provider page, and (when Automation allows it)
+ * press the service's own “Sign in” button in Safari so the user does not have
+ * to repeat the click.
+ */
+function scheduleAuthReturn(tab: ServiceTab): void {
   const provider = getProviderConfig(tab.providerId);
   const root = tab.providerId === 'custom' ? tab.url || provider.url : provider.url;
-  // 'opened' leaves the tab on the provider page on purpose: the import
-  // navigates back to the service, and a return now would bounce right away.
-  if (outcome === 'imported') {
-    navigateTab(tab.id, root);
-    return;
-  }
-  if (outcome === 'opened') {
-    // The tab's own round trip cannot finish without the browser, so do not leave
-    // a dead provider page (or a frozen "Sign in with Apple" screen) behind.
-    setTimeout(() => {
-      const contents = contentsForTab(tab);
-      if (!contents || contents.isDestroyed()) return;
-      if (!isAuthHost(hostOf(contents.getURL()))) return;
-      navigateTab(tab.id, root);
-    }, 1500);
-  }
 
-  // Optional: press the service's own "Sign in / Continue with Google" button in
-  // Safari through Apple Events, so the user does not repeat the click. Needs
-  // Automation and Safari's "Allow JavaScript from Apple Events"; anything
-  // missing just means they click it themselves.
+  setTimeout(() => {
+    const contents = contentsForTab(tab);
+    if (!contents || contents.isDestroyed()) return;
+    if (!isAuthHost(hostOf(contents.getURL()))) return;
+    navigateTab(tab.id, serviceEntryUrl(root));
+  }, 1500);
+
   const host = tabHost(root);
   if (!host) return;
   setTimeout(() => {
@@ -1215,13 +1262,11 @@ async function captureGoogleVault(): Promise<void> {
   if (safari.cookies.length === 0) return;
 
   const stored = getPreferences().googleVaultSession;
-  // A handoff may have used a different account than the one saved here.
-  // Replacing it would silently change the account every new tab gets, so keep
-  // the saved login and let the user decide in Settings.
+  // A fresh sign-in rotates Google's SID, so a changed fingerprint is a new
+  // session at least as often as it is another account. The vault mirrors the
+  // browser: follow it instead of keeping a snapshot Safari has replaced.
   if (stored && safari.session && safari.session !== stored) {
-    logBrowserSignIn('google vault kept: Safari is signed in as a different account');
-    sendToRenderer(IPC_CHANNELS.googleSignInDone, { copied: 0, signedIn: true, differentAccount: true });
-    return;
+    logBrowserSignIn('google vault refresh: Safari session changed');
   }
 
   try {
@@ -1354,30 +1399,21 @@ function wireWebContents(contents: Electron.WebContents): void {
     if (!isHttpUrl(url) && url !== 'about:blank') event.preventDefault();
   });
 
-  // The service handed the tab (or its popup) over to a sign-in provider. That
-  // form cannot work here, so switch the login to Safari.
+  // The service handed the tab (or its popup) over to a sign-in provider. One
+  // state machine decides what happens next (see src/main/login-flow.ts).
   contents.on('did-start-navigation', (event) => {
     if (!event.isMainFrame || !isHttpUrl(event.url)) return;
     // Test-only switch: lets a throwaway profile stay on the provider's page.
     if (process.env.ALLAI_DISABLE_AUTH_HANDOFF === '1') return;
-    if (!isAuthHost(tabHost(event.url))) return;
+    const host = tabHost(event.url);
+    if (!isAuthHost(host)) return;
     const tab = tabForContents(contents);
     if (!tab) return;
-    if (Date.now() < (authHandoffUntil.get(tab.id) ?? 0)) return;
-    authHandoffUntil.set(tab.id, Date.now() + AUTH_HANDOFF_SUPPRESS_MS);
-
-    // A service that keeps bouncing to its provider must not spin forever.
-    const now = Date.now();
-    const previous = authHandoffAttempts.get(tab.id);
-    const count = previous && now - previous.at < 60_000 ? previous.count + 1 : 1;
-    authHandoffAttempts.set(tab.id, { count, at: now });
-    if (count > 2) {
-      logBrowserSignIn(`auth handoff loop guard tab=${tab.label} attempts=${count}`);
-      return;
-    }
-    void handOffAuthNavigation(tab, tabHost(event.url), contents);
-    // A popup that only hosted the provider's login has nothing left to show.
-    if (contentsForTab(tab) !== contents) contents.close();
+    const fromPopup = contentsForTab(tab) !== contents;
+    void loginFlow.begin(tab.id, host, fromPopup ? 'popup' : 'navigation').then(() => {
+      // A popup that only hosted the provider's login has nothing left to show.
+      if (fromPopup && !contents.isDestroyed()) contents.close();
+    });
   });
 
   if (isWebview) {
@@ -1388,19 +1424,29 @@ function wireWebContents(contents: Electron.WebContents): void {
       markAuthNavigation(contents, url);
       rememberTabUrl(contents, url);
       scheduleCapture(contents);
+      const tab = tabForContents(contents);
+      if (tab) loginFlow.onNavigated(tab.id, url);
     });
     contents.on('did-navigate-in-page', (_event, url, isMainFrame) => {
       if (!isMainFrame) return;
       rememberTabUrl(contents, url);
       scheduleCapture(contents);
+      const tab = tabForContents(contents);
+      if (tab) loginFlow.onNavigated(tab.id, url);
     });
     contents.on('did-stop-loading', () => {
       markAuthNavigation(contents, contents.getURL());
       scheduleCapture(contents);
       void harvestTab(contents);
-      // Back on a normal page: the loop guard for the auth handoff can lift.
       const tab = tabForContents(contents);
-      if (tab && !isAuthHost(tabHost(contents.getURL()))) authHandoffUntil.delete(tab.id);
+      if (tab) loginFlow.onSettled(tab.id, contents.getURL(), contents.getTitle());
+    });
+    contents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (!isMainFrame) return;
+      // -3 is ERR_ABORTED: our own reload or a superseded navigation, not a failure.
+      if (errorCode === -3) return;
+      const tab = tabForContents(contents);
+      if (tab) loginFlow.onLoadFailed(tab.id, `${errorDescription || errorCode} · ${tabHost(validatedURL) ?? 'unknown'}`);
     });
   }
 
@@ -1668,10 +1714,15 @@ function wireIpc(): void {
 
   // A blocked passkey request, from a <webview> or from an OAuth popup. The
   // popup shares the tab's partition, so the session identifies the tab even
-  // though the popup has no webview host to talk to.
+  // though the popup has no webview host to talk to. The flow decides whether
+  // Google can answer in the tab or the login has to go to Safari.
   ipcMain.on(IPC_CHANNELS.passkeyBlocked, (event) => {
     const tab = tabForContents(event.sender);
-    if (tab) void beginBrowserSignIn(tab, true);
+    if (!tab) return;
+    const senderUrl = event.sender.isDestroyed() ? '' : event.sender.getURL();
+    const host = hostOf(senderUrl);
+    logBrowserSignIn(`passkey blocked tab=${tab.label} host=${host ?? '-'}`);
+    void loginFlow.begin(tab.id, host, 'passkey');
   });
 
   ipcMain.handle(IPC_CHANNELS.importSafariNow, async (_event, tabId: string) => {

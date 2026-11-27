@@ -7,7 +7,7 @@ import type { BrowserSignInResult } from '@shared/ipc';
 
 vi.mock('./safari-cookies', () => ({ readSafariCookies: vi.fn() }));
 
-import { importSafariGoogleSession, importSafariSessionNow, readSafariGoogleSession, watchSafariSession } from './browser-sign-in';
+import { compileSessionCookiePattern, importSafariGoogleSession, importSafariSessionNow, readSafariGoogleSession, readSafariGoogleState, watchSafariSession } from './browser-sign-in';
 import { readSafariCookies } from './safari-cookies';
 
 const read = vi.mocked(readSafariCookies);
@@ -213,6 +213,103 @@ describe('watchSafariSession', () => {
 
     await expect(result.promise).resolves.toMatchObject({ state: 'imported', host: 'gemini.google.com' });
     expect(writes.some((details) => details.name === '__Secure-1PSID')).toBe(true);
+  });
+
+  it('imports a Supabase auth-token for a custom service', async () => {
+    // seedance.ai signs in through Supabase; its session is
+    // `sb-<ref>-auth-token`, which the ChatGPT rule never matched, so the
+    // handoff waited out the whole 10-minute deadline (2026-11-27).
+    const seedance = (name: string): CookieRecord => ({ ...cookie(name), domain: 'www.seedance.ai' });
+    const verifier = seedance('sb-stcyczqlqaveeyocpvop-auth-token-code-verifier');
+    const token = seedance('sb-stcyczqlqaveeyocpvop-auth-token');
+
+    read.mockReturnValueOnce({ cookies: [], path: '/tmp/x' });
+    read.mockReturnValue({ cookies: [verifier, token], path: '/tmp/x' });
+
+    const { session, writes } = fakeSession();
+    const result = waitForResult();
+
+    let stop: () => void = () => undefined;
+    stop = watchSafariSession({
+      tabId: 't',
+      host: 'www.seedance.ai',
+      session,
+      pollMs: 5,
+      deadlineMs: 500,
+      onDone: (done) => { stop(); result.done(done); }
+    });
+
+    await expect(result.promise).resolves.toMatchObject({ state: 'imported', host: 'www.seedance.ai' });
+    expect(writes.some((details) => details.name === 'sb-stcyczqlqaveeyocpvop-auth-token')).toBe(true);
+  });
+
+  it('keeps waiting while only the Supabase code verifier appeared', async () => {
+    const verifier: CookieRecord = {
+      ...cookie('sb-stcyczqlqaveeyocpvop-auth-token-code-verifier'),
+      domain: 'www.seedance.ai'
+    };
+    read.mockReturnValue({ cookies: [verifier], path: '/tmp/x' });
+
+    const { session, writes } = fakeSession();
+    const onDone = vi.fn();
+
+    const stop = watchSafariSession({
+      tabId: 't',
+      host: 'www.seedance.ai',
+      session,
+      pollMs: 5,
+      deadlineMs: 500,
+      onDone
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    stop();
+    expect(onDone).not.toHaveBeenCalled();
+    expect(writes).toHaveLength(0);
+  });
+});
+
+describe('default session cookie rule', () => {
+  it('treats a Supabase auth-token as a session but not its code verifier', () => {
+    const pattern = compileSessionCookiePattern();
+    expect(pattern.test('sb-stcyczqlqaveeyocpvop-auth-token')).toBe(true);
+    expect(pattern.test('sb-stcyczqlqaveeyocpvop-auth-token.0')).toBe(true);
+    expect(pattern.test('sb-stcyczqlqaveeyocpvop-auth-token-code-verifier')).toBe(false);
+    expect(pattern.test('__Host-id-token-nonce')).toBe(false);
+    expect(pattern.test('oai-did')).toBe(false);
+  });
+});
+
+describe('readSafariGoogleState', () => {
+  beforeEach(() => {
+    read.mockReset();
+  });
+
+  const googleCookie = (name: string): CookieRecord => ({ ...cookie(name), domain: 'google.com' });
+
+  it('reports the live browser login and its cookies', () => {
+    read.mockReturnValue({ cookies: [googleCookie('NID'), googleCookie('SID')], path: '/tmp/x' });
+    const status = readSafariGoogleState();
+    expect(status.state).toBe('signed-in');
+    expect(status.cookies.map((item) => item.name)).toContain('SID');
+    expect(status.session).toBeTruthy();
+  });
+
+  it('reports signed-out when the browser has no Google session left', () => {
+    // Clearing Safari's cookies must make the vault snapshot look stale, not
+    // leave the app answering Google sign-ins from a login the user removed.
+    read.mockReturnValue({ cookies: [{ ...cookie('_ga'), domain: 'seedance.ai' }], path: '/tmp/x' });
+    expect(readSafariGoogleState()).toMatchObject({ state: 'signed-out', cookies: [] });
+  });
+
+  it('reports signed-out when Safari has no cookie store at all', () => {
+    read.mockReturnValue({ cookies: [], error: 'missing' });
+    expect(readSafariGoogleState().state).toBe('signed-out');
+  });
+
+  it('reports unknown when the store cannot be read', () => {
+    read.mockReturnValue({ cookies: [], error: 'denied' });
+    expect(readSafariGoogleState().state).toBe('unknown');
   });
 });
 

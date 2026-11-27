@@ -29,10 +29,15 @@ export interface SafariImportResult {
 
 /**
  * Cookies that mean "this is the session", as opposed to a device id or cache.
- * This is the ChatGPT rule; services that name the cookie differently declare
- * their own pattern in `ProviderConfig.sessionCookiePattern`.
+ * `session-token` is ChatGPT's name; `auth-token` (chunked as `auth-token.0`
+ * when large) is what Supabase-backed services write — seedance.ai's
+ * `sb-<ref>-auth-token` was never recognised, so the handoff waited out its
+ * whole deadline. Its `-code-verifier` sibling must not count: it is written
+ * when the OAuth flow starts, before anybody is signed in. Services that name
+ * the cookie differently declare their own pattern in
+ * `ProviderConfig.sessionCookiePattern`.
  */
-export const DEFAULT_SESSION_COOKIE_PATTERN = 'session-token|(^|\\.)session$';
+export const DEFAULT_SESSION_COOKIE_PATTERN = 'session-token|(^|\\.)session$|auth-token(\\.\\d+)?$';
 
 /** Compiles a provider's session-cookie rule, falling back to the default. */
 export function compileSessionCookiePattern(source?: string): RegExp {
@@ -93,6 +98,39 @@ export interface SafariGoogleSession {
   session?: string;
 }
 
+export interface SafariGoogleStatus {
+  /** `unknown` means the store could not be read, not that it is empty. */
+  state: 'signed-in' | 'signed-out' | 'unknown';
+  /** Every google.com cookie Safari holds; empty unless `signed-in`. */
+  cookies: CookieRecord[];
+  /** Fingerprint of the login behind them, when one is signed in. */
+  session?: string;
+  error?: 'missing' | 'denied' | 'unreadable';
+}
+
+/**
+ * Whether the browser itself is signed in to Google right now.
+ *
+ * The vault is a snapshot of this jar; this is the live answer. Callers use it
+ * so a snapshot cannot outlive the login it came from — after the user signs out
+ * of Google in Safari, or clears its cookies, answering from the vault would
+ * hide the sign-in instead of doing it.
+ */
+export function readSafariGoogleState(): SafariGoogleStatus {
+  const read = readSafariCookies();
+  if (read.error === 'denied' || read.error === 'unreadable') {
+    return { state: 'unknown', cookies: [], error: read.error };
+  }
+
+  const google = read.cookies.filter((cookie) => isGoogleHost(cookie.domain));
+  const pattern = compileSessionCookiePattern(GOOGLE_SESSION_PATTERN);
+  if (!google.some((cookie) => pattern.test(cookie.name))) {
+    return { state: 'signed-out', cookies: [] };
+  }
+
+  return { state: 'signed-in', cookies: google, session: fingerprintGoogleSession(google) };
+}
+
 /**
  * Reads the Google session Safari currently holds, without writing anything.
  *
@@ -102,20 +140,19 @@ export interface SafariGoogleSession {
  * to Google — or the store could not be read at all.
  */
 export function readSafariGoogleSession(): SafariGoogleSession {
-  const read = readSafariCookies();
-  if (read.error) return { cookies: [] };
+  const status = readSafariGoogleState();
+  return { cookies: status.cookies, session: status.session };
+}
 
-  const google = read.cookies.filter((cookie) => isGoogleHost(cookie.domain));
-  const pattern = compileSessionCookiePattern(GOOGLE_SESSION_PATTERN);
-  if (!google.some((cookie) => pattern.test(cookie.name))) return { cookies: [] };
-
-  return { cookies: google, session: fingerprintGoogleSession(google) };
+/** Writes a cookie set into an app session (used to take the live login). */
+export async function importSafariCookies(target: Session, cookies: CookieRecord[]): Promise<number> {
+  if (cookies.length === 0) return 0;
+  return writeMatching(target, cookies);
 }
 
 /** Writes a Google cookie set into the app's own vault partition. */
 export async function importSafariGoogleSession(vault: Session, cookies: CookieRecord[]): Promise<number> {
-  if (cookies.length === 0) return 0;
-  return writeMatching(vault, cookies);
+  return importSafariCookies(vault, cookies);
 }
 
 export interface WatchOptions {

@@ -23,7 +23,9 @@ is still waiting to be read.
 
 ![Adding a service](docs/screenshots/add-service.png)
 
-![Settings: theme, downloads and shared Google sign-in](docs/screenshots/settings.png)
+![Settings: appearance, interface size, history search and sync](docs/screenshots/settings.png)
+
+![Settings: shared Google sign-in and downloads](docs/screenshots/settings-google.png)
 
 ![Downloads panel](docs/screenshots/downloads.png)
 
@@ -48,23 +50,33 @@ is still waiting to be read.
   correctly after login.
 - **Browser sign-in when the site cannot finish it** — Electron cannot complete
   WebAuthn, and some services bounce the tab to a sign-in provider that refuses
-  to run there. On macOS both cases hand the login to Safari: an existing Safari
-  session is taken over instantly, otherwise the app opens the service there and
+  to run there. Every sign-in now runs through one decision tree: a Google login
+  is answered inside the tab while Safari itself holds the session, Apple,
+  Microsoft, GitHub, Clerk and popup-based logins go to Safari, and a Google
+  sign-in is also sent to Safari when the browser is signed out of Google — a
+  stored snapshot never outlives the browser login it came from. The app then
   watches Safari's cookie store until a *session* cookie appears (device ids and
-  cache cookies do not count), takes the session over, closes the browser tab it
-  opened and pulls the app to the front. Needs **Full Disk Access**; the optional
+  cache cookies do not count; Supabase services use `sb-…-auth-token`), takes the
+  session over, closes the browser tab it opened and pulls the app to the front.
+  After an import the service is checked once, and a provider error page
+  (`400`, `error=`, “Something went wrong”) returns the tab to the service with
+  an explanation instead of leaving a dead page. Every attempt is logged with a
+  flow id in `browser-sign-in.log`. Needs **Full Disk Access**; the optional
   **Control Safari** permission lets the app press the login button there too.
   **Right-click a tab → Import cookies…** does the same manually, or on any
   platform: paste a Netscape `cookies.txt` or a `Cookie:` header. Only cookies
   for that tab's own service are written.
-- **One Google sign-in for all services** — a Google session finished in the
-  browser is kept in the app's own profile and reused in new tabs, so the next
-  service signs in without another trip to Safari. It is one Google login, like
-  one browser profile: open **Settings → Google sign-in → Google accounts…** to
-  add a second or third account there and Google will offer its account chooser.
-  A login that used a different account in Safari does not overwrite what is
-  stored. Every service still keeps its own cookies. Can be disabled in
-  **Settings → Google sign-in**.
+- **One Google sign-in for all services** — the Google session is read from
+  Safari when a sign-in starts and kept in the app's own profile, so the next
+  service signs in without another trip to Safari. Because it is read live,
+  signing out of Google in Safari (or clearing its cookies) makes the next
+  sign-in go back to the browser instead of replaying an old snapshot, and a
+  fresh login refreshes the stored copy. It is one Google login, like one
+  browser profile: open **Settings → Google sign-in → Google accounts…** to add
+  a second or third account there and Google will offer its account chooser; a
+  login made with another account in Safari becomes the shared one, exactly like
+  a browser profile switching accounts. Every service still keeps its own
+  cookies. Can be disabled in **Settings → Google sign-in**.
 - **Downloads** — files go to `~/Downloads` by default, or to a folder chosen in
   **Settings → Downloads**. A browser-style download button in the top bar shows
   progress, lets you cancel a transfer, open the file or reveal it in Finder /
@@ -444,8 +456,16 @@ reopening it means signing in again. This keeps stale credentials from piling up
   **Sign in with iPhone**, Google passkeys and similar buttons cannot finish
   here — sign in with the account password and use the phone for the two-factor
   code instead.
-- A passkey button now opens Safari on macOS; if you would rather not leave the
-  app, close the Safari window — the tab keeps working with a password.
+- A passkey prompt on Google's own page no longer sends you to Safari when the
+  tab already has a Google session: it stays in the app, explains that passkeys
+  cannot run there, and leaves the password / 2FA path available. Apple ID,
+  Microsoft and popup-based passkey logins still open Safari, where a passkey
+  can actually be used.
+- A sign-in that is verified after the handover can report itself: one reload is
+  spent checking that the service accepted the session, and if it still shows a
+  sign-in page the app says so instead of pretending it worked. The full
+  decision tree is written to `browser-sign-in.log` with one flow id per
+  attempt, and error-page hosts are logged without query strings.
 - If the Safari handoff does not bring a session over, the app keeps a small
   log at `browser-sign-in.log` in its data folder (hosts and counts only, never
   cookie values); `denied` there means the Full Disk Access grant is missing.
@@ -455,6 +475,10 @@ reopening it means signing in again. This keeps stale credentials from piling up
   build can lose that grant and has to be re-added. Cookies exported from Safari
   carry a macOS user agent while the app presents Chrome/Windows, so a
   Cloudflare-protected site may still ask for a challenge.
+- The browser handoff reads Safari, so it exists only on macOS. On Windows and
+  Linux the app uses an in-tab login plus the stored Google session, and
+  **Import cookies…** for services that cannot finish a login there; a Chrome /
+  Edge cookie-store adapter would be separate work.
 - macOS builds are ad-hoc signed, so the first launch still needs right-click →
   Open and the app is not notarized. Updates themselves no longer require a
   Developer ID: the fallback updater replaces the bundle and verifies the

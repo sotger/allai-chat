@@ -1,5 +1,61 @@
 # Changelog
 
+## 1.9.1 — 2026-11-27
+
+### Fixed
+
+- **A passkey prompt on Google's own page no longer hands the login to Safari.**
+  Google asks for a passkey as a step-up check even when the app already holds a
+  Google session. Opening Safari at the service abandoned that session and left
+  the tab on Google's “Something went wrong … Try again or try another way”
+  page, and the browser login could not be taken back. The prompt is now answered
+  in the app — the tab keeps its Google session and a notice points at the
+  password / 2FA path — and only a service without any Google session is taken
+  to Safari. Apple and Microsoft passkey flows are unchanged.
+- **Supabase-based services come back from the browser.** Their session cookie is
+  `sb-<ref>-auth-token`, which the default `*session-token` rule never matched:
+  the handoff waited out its 10-minute deadline and the tab never returned
+  (reported on seedance.ai). `auth-token` is now recognised as a session name,
+  while its `-code-verifier` sibling — written when the OAuth flow starts — is
+  ignored.
+- **A failed handoff no longer leaves a dead provider page.** After a timeout or
+  a missing Full Disk Access grant the tab returns to the service instead of
+  staying on the sign-in page, and the notice points at **Import cookies…**.
+- **A stopped sign-in loop says why.** When a service keeps bouncing to its
+  provider, the app shows a notice with the **Import cookies…** hint instead of
+  silently doing nothing.
+- **A Google sign-in is answered from the browser's live session, not only from
+  the stored snapshot.** The vault is a snapshot of Safari's cookies; when the
+  user signed out of Google in Safari, or cleared its cookies, the app still
+  replayed the old snapshot, so the login never happened and the tab sat on
+  Google's error page. The app now checks Safari first: a live session is copied
+  into the tab (so a rotated `SID` is picked up), and a browser that is signed
+  out hands the login over to Safari instead of being answered from the snapshot.
+- **The stored Google session follows Safari.** A fresh login rotates Google's
+  `SID`, which the old fingerprint check reported as “a different account” and
+  then kept the outdated snapshot. The vault is now refreshed from the browser
+  session that replaced it.
+- **One login flow for every provider, site and start.** Sign-in is now a single
+  state machine per tab (`in-tab` → `verifying` → `done`/`failed`, or `browser`
+  → `verifying`), driven by the provider: Google is answered in the tab only
+  while Safari holds the login, Apple/Microsoft/GitHub/Clerk and every
+  popup-based login go to Safari. Duplicates are ignored while a flow runs, so
+  the old 3-minute blind window is gone, and every transition is logged with a
+  flow id.
+- **A sign-in no longer replays the provider page for nothing.** The OAuth page
+  was reloaded even when the tab already held exactly the same cookies, which
+  produced Google's 400 on the second attempt. The reload now happens only when
+  the login cookies actually changed.
+- **Provider error pages are handled.** A 400/`error=` page or Google's “Error
+  400”/“Something went wrong” screen now ends the flow with an explanation and
+  returns the tab to the service, instead of leaving a dead page behind.
+- **A taken-over session lands on the service, not on its sign-in URL.** After
+  an import the tab opens the service origin (`https://host/`) when the stored
+  URL was `/signin…`, so the login modal does not reappear over a valid session.
+- **The result is verified.** After an import the service is checked once, with
+  a single reload, and a session the service still rejects is reported instead
+  of being presented as success.
+
 ## 1.9.0 — 2026-11-24
 
 ### Added

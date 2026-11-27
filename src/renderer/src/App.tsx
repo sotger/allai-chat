@@ -148,7 +148,10 @@ export default function App() {
     } else if (result.state === 'denied') {
       store.setNotice('macOS blocked reading Safari cookies. Grant ALLAI-CHAT Full Disk Access, or use Import cookies… from the tab context menu.');
     } else if (result.state === 'timeout') {
-      store.setNotice('Safari did not hand over a session in time. Finish the sign-in there, then try again.');
+      store.setNotice('Safari did not hand over a session in time. Finish the sign-in there, or use Import cookies… from the tab context menu.');
+    } else if (result.state === 'blocked') {
+      store.setNotice(result.message
+        ?? 'Sign-in was stopped. Use another sign-in method, or use Import cookies… from the tab context menu.');
     }
   }), []);
 

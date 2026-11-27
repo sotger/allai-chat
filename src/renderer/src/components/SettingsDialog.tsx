@@ -343,8 +343,9 @@ export function SettingsDialog() {
           <p className="muted settings-hint">
             This is one Google login, like one browser profile: sign in several accounts with
             <strong> Google accounts…</strong> and Google will offer the chooser to any service
-            that asks. A login that used a different account in Safari replaces nothing here —
-            it stays in that tab. Each service keeps its own cookies; <strong>Reset login
+            that asks. The session is read from Safari when a sign-in starts, so signing out
+            there (or clearing its cookies) sends the next login back to the browser instead of
+            replaying an old copy. Each service keeps its own cookies; <strong>Reset login
             info</strong> opts one tab out of the sharing.
           </p>
         </section>
